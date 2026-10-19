@@ -1,26 +1,141 @@
 @import "tailwindcss";
 
+@theme {
+  --font-sans: var(--font-body), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-face), Georgia, "Times New Roman", serif;
+
+  /* Warm spa neutrals */
+  --color-sand-50: #fbf9f6;
+  --color-sand-100: #f6f2ec;
+  --color-sand-200: #ece5db;
+  --color-sand-300: #ded3c4;
+  --color-sand-400: #c9b8a3;
+
+  /* Ink (text) */
+  --color-ink-900: #17201d;
+  --color-ink-800: #24302c;
+  --color-ink-700: #36443f;
+  --color-ink-600: #4c5b56;
+  --color-ink-500: #66746f;
+  --color-ink-400: #8b9793;
+  --color-ink-300: #b6bfbc;
+  --color-ink-200: #d9dfdd;
+  --color-ink-100: #eef1f0;
+
+  /* Brand (deep botanical green) */
+  --color-brand-50: #eef7f5;
+  --color-brand-100: #d7ebe7;
+  --color-brand-200: #b1d7d0;
+  --color-brand-300: #83bcb2;
+  --color-brand-400: #529d92;
+  --color-brand-500: #337f75;
+  --color-brand-600: #26665e;
+  --color-brand-700: #20524c;
+  --color-brand-800: #1c423e;
+  --color-brand-900: #193835;
+  --color-brand-950: #0a201e;
+
+  /* Clay (terracotta accent) */
+  --color-clay-50: #fdf5ef;
+  --color-clay-100: #fbe8dc;
+  --color-clay-200: #f6cdb4;
+  --color-clay-300: #f0ab86;
+  --color-clay-400: #e88256;
+  --color-clay-500: #e2643a;
+  --color-clay-600: #d44c2a;
+  --color-clay-700: #b03a22;
+  --color-clay-800: #8c3120;
+  --color-clay-900: #712b1e;
+}
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  color-scheme: light;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-sand-50);
+  color: var(--color-ink-900);
+  font-family: var(--font-sans);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  font-weight: 500;
+  letter-spacing: -0.015em;
+  color: var(--color-ink-900);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-brand-600);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+::selection {
+  background: var(--color-brand-200);
+  color: var(--color-brand-950);
+}
+
+/* thin scrollbars on filter rails */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* shadery skeleton */
+.skeleton {
+  background: linear-gradient(90deg, var(--color-sand-100) 25%, var(--color-sand-200) 50%, var(--color-sand-100) 75%);
+  background-size: 200% 100%;
+  animation: skeleton 1.4s ease infinite;
+}
+@keyframes skeleton {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.toast-in {
+  animation: toast-in 0.18s ease-out;
+}
+
+/* Voucher / invoice printing */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #fff;
+  }
+  @page {
+    margin: 14mm;
+  }
 }
