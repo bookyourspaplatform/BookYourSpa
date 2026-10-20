@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { MapPin, Star } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { formatMoney } from '@/lib/money';
-import { CATEGORY_LABELS } from '@/lib/catalog';
+import { CATEGORY_LABELS, SPA_CATEGORY_LABELS } from '@/lib/catalog';
 import type { SpaListItem } from '@/lib/catalog';
 
 const GRADIENTS = [
@@ -31,7 +31,12 @@ export function SpaCard({ spa, index = 0 }: { spa: SpaListItem; index?: number }
       className="group flex flex-col overflow-hidden rounded-2xl border border-ink-100 bg-white shadow-[0_1px_2px_rgba(23,32,29,0.05)] transition-all hover:-translate-y-0.5 hover:shadow-lg"
     >
       <div className={`relative flex h-40 items-center justify-center bg-gradient-to-br ${gradient}`}>
-        <span className="font-display text-4xl text-white/90 drop-shadow-sm">{initialsOf(spa.name)}</span>
+        {spa.coverUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element -- cover may be a branch-uploaded data URL
+          <img src={spa.coverUrl} alt="" className="absolute inset-0 size-full object-cover" loading="lazy" />
+        ) : (
+          <span className="font-display text-4xl text-white/90 drop-shadow-sm">{initialsOf(spa.name)}</span>
+        )}
         {spa.featured && (
           <span className="absolute left-3 top-3">
             <Badge tone="warning" className="bg-amber-300/95 border-amber-200 text-amber-950">
@@ -53,14 +58,22 @@ export function SpaCard({ spa, index = 0 }: { spa: SpaListItem; index?: number }
           </p>
         </div>
 
-        {spa.tagline && <p className="line-clamp-2 text-[13.5px] leading-relaxed text-ink-500">{spa.tagline}</p>}
+        {spa.tagline && <p className="text-[13.5px] font-medium leading-snug text-brand-800">{spa.tagline}</p>}
+        {spa.shortDescription && (
+          <p className="line-clamp-2 text-[13px] leading-relaxed text-ink-500">{spa.shortDescription}</p>
+        )}
 
         <div className="mt-auto flex flex-wrap gap-1.5">
-          {spa.categories.slice(0, 3).map((c) => (
-            <span key={c} className="rounded-full bg-sand-100 px-2 py-0.5 text-[11.5px] text-ink-600">
-              {CATEGORY_LABELS[c] ?? c}
-            </span>
-          ))}
+          {[
+            ...spa.spaCategories.map((c) => SPA_CATEGORY_LABELS[c] ?? c),
+            ...spa.categories.map((c) => CATEGORY_LABELS[c] ?? c),
+          ]
+            .slice(0, 4)
+            .map((label) => (
+              <span key={label} className="rounded-full bg-sand-100 px-2 py-0.5 text-[11.5px] text-ink-600">
+                {label}
+              </span>
+            ))}
         </div>
 
         <div className="flex items-end justify-between border-t border-ink-100 pt-3">

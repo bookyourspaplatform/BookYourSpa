@@ -129,7 +129,7 @@ export default async function SpaDetailPage({ params }: { params: Promise<{ slug
             <a href="#menu" className={buttonClasses('secondary', 'lg')}>
               View menu & prices
             </a>
-            <Link href={`/spas/${slug}/${spa.branches[0]?.slug ?? ''}`} className={buttonClasses('outline', 'lg', 'bg-transparent text-white border-white/50 hover:bg-white/10')}>
+            <Link href={`/spas/${slug}/${spa.branches[0]?.slug ?? ''}`} className={buttonClasses('outlineLight', 'lg')}>
               Choose a branch <ArrowRight className="size-4" />
             </Link>
           </div>

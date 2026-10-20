@@ -17,9 +17,13 @@ import {
   therapists,
   treatments,
   PROMO_POSITIONS,
+  SPA_CATEGORIES,
+  SPA_FACILITIES,
+  SPA_TYPES,
   TREATMENT_CATEGORIES,
   USER_STATUSES,
 } from '@/db/schema';
+import { sanitizeRichText } from '@/lib/security';
 import { requireUser } from '@/lib/auth/session';
 import { cancelBooking, BookingError } from '@/lib/booking';
 import { logAudit } from '@/lib/audit';
@@ -110,31 +114,66 @@ const branchSchema = z.object({
   currency: z.string().min(3).max(3),
   phone: z.string().max(40).optional().nullable(),
   email: z.union([z.string().email().max(160), z.literal('')]).optional().nullable(),
-  description: z.string().max(4000).optional().nullable(),
+  website: z.union([z.string().url().max(240), z.literal('')]).optional().nullable(),
+  description: z.string().max(60000).optional().nullable(),
+  googleMapsUrl: z.union([z.string().url().max(500), z.literal('')]).optional().nullable(),
+  lat: z.string().max(40).optional().nullable(),
+  lng: z.string().max(40).optional().nullable(),
+  tagline: z.string().max(140).optional().nullable(),
+  shortDescription: z.string().max(160).optional().nullable(),
+  categories: z.array(z.enum(SPA_CATEGORIES)).max(6).default([]),
+  spaTypes: z.array(z.enum(SPA_TYPES)).max(20).default([]),
+  doorstepService: z.boolean().default(false),
+  facilities: z.array(z.enum(SPA_FACILITIES)).max(20).default([]),
+  images: z
+    .array(z.string().max(4_000_000))
+    .max(10)
+    .default([]),
   hours: hoursSchema.optional(),
   leadTimeMinutes: z.number().int().min(0).max(60 * 24 * 7),
   maxAdvanceDays: z.number().int().min(1).max(400),
   bufferMinutes: z.number().int().min(0).max(240),
   slotIntervalMinutes: z.number().int().min(5).max(240),
-  onlinePaymentEnabled: z.boolean(),
-  paymentMethods: z.array(z.enum(['stripe', 'paypal', 'razorpay', 'venue'])).min(1),
+  // Payments are platform-configured — the form no longer edits these.
+  onlinePaymentEnabled: z.boolean().optional(),
+  paymentMethods: z.array(z.enum(['stripe', 'paypal', 'razorpay', 'venue'])).min(1).optional(),
   status: z.enum(USER_STATUSES).optional(),
 });
+
+function cleanCoord(value: string | null | undefined): string | null {
+  const v = value?.trim();
+  if (!v) return null;
+  return /^-?\d{1,3}(\.\d+)?$/.test(v) ? v : null;
+}
 
 export async function saveBranch(input: z.infer<typeof branchSchema>): Promise<ActionResult<{ id: string }>> {
   try {
     const parsed = branchSchema.safeParse(input);
     if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? 'Invalid branch data.');
     const { db, providerId, user } = await providerCtx();
-    const data = parsed.data;
+    const { id, ...data } = parsed.data;
 
-    if (data.id) {
-      await assertBranch(db, providerId, data.id);
-      const slug = await uniqueBranchSlug(db, providerId, data.name, data.id);
-      const { id, ...rest } = data;
+    // Shared shape for create + update. Empty strings → null; rich text sanitized;
+    // payment fields are optional (platform-configured) and omitted when absent.
+    const payload = {
+      ...data,
+      email: data.email || null,
+      website: data.website || null,
+      description: data.description ? sanitizeRichText(data.description) : null,
+      googleMapsUrl: data.googleMapsUrl || null,
+      lat: cleanCoord(data.lat),
+      lng: cleanCoord(data.lng),
+      tagline: data.tagline || null,
+      shortDescription: data.shortDescription || null,
+      images: data.images.filter((s) => /^https?:\/\//i.test(s) || /^data:image\//i.test(s)).slice(0, 10),
+    };
+
+    if (id) {
+      await assertBranch(db, providerId, id);
+      const slug = await uniqueBranchSlug(db, providerId, data.name, id);
       const [updated] = await db
         .update(branches)
-        .set({ ...rest, email: rest.email || null, slug, updatedAt: new Date() })
+        .set({ ...payload, slug, updatedAt: new Date() })
         .where(and(eq(branches.id, id), eq(branches.providerId, providerId)))
         .returning({ id: branches.id });
       await logAudit({ actorId: user.id, actorRole: user.role, action: 'branch.updated', entity: 'branch', entityId: id });
@@ -145,13 +184,221 @@ export async function saveBranch(input: z.infer<typeof branchSchema>): Promise<A
     const slug = await uniqueBranchSlug(db, providerId, data.name);
     const [created] = await db
       .insert(branches)
-      .values({ ...data, id: newId('brn'), providerId, slug })
+      .values({ ...payload, id: newId('brn'), providerId, slug })
       .returning({ id: branches.id });
     await logAudit({ actorId: user.id, actorRole: user.role, action: 'branch.created', entity: 'branch', entityId: created!.id });
     revalidateProvider(providerId, ['/provider/branches', '/provider/availability']);
     return { ok: true, data: { id: created!.id } };
   } catch {
     return fail('Could not save the branch.');
+  }
+}
+
+/* --------------------------- Google Maps import ------------------------- */
+
+export type GoogleMapsImport = {
+  ok: true;
+  data: {
+    lat: string | null;
+    lng: string | null;
+    name: string | null;
+    phone: string | null;
+    website: string | null;
+    address: string | null;
+    resolvedUrl: string;
+    /** 'places' = enriched via GOOGLE_MAPS_API_KEY, 'url' = parsed from the link only. */
+    source: 'places' | 'url';
+  };
+} | { ok: false; error: string };
+
+const MAPS_HOSTS = new Set([
+  'google.com',
+  'www.google.com',
+  'maps.google.com',
+  'maps.app.goo.gl',
+  'goo.gl',
+  'www.goo.gl',
+]);
+
+function allowedMapsUrl(raw: string): URL | null {
+  try {
+    const u = new URL(raw.trim());
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
+    const host = u.hostname.toLowerCase();
+    if (!MAPS_HOSTS.has(host)) return null;
+    if (host === 'goo.gl' || host === 'www.goo.gl') {
+      if (!u.pathname.startsWith('/maps')) return null;
+    }
+    return u;
+  } catch {
+    return null;
+  }
+}
+
+/** Follow redirects manually (validating every hop) to resolve short links. */
+async function resolveMapsUrl(start: string): Promise<string> {
+  let current = start;
+  for (let hop = 0; hop < 5; hop++) {
+    const url = allowedMapsUrl(current);
+    if (!url) return current;
+    const res = await fetch(url.toString(), { redirect: 'manual', signal: AbortSignal.timeout(8000) }).catch(() => null);
+    if (!res) return current;
+    if (res.status >= 300 && res.status < 400) {
+      const loc = res.headers.get('location');
+      if (!loc) return current;
+      try {
+        current = new URL(loc, url).toString();
+      } catch {
+        return current;
+      }
+      continue;
+    }
+    return res.url || current;
+  }
+  return current;
+}
+
+function parseCoordsFromUrl(raw: string): { lat: string | null; lng: string | null; name: string | null } {
+  let decoded = raw;
+  try {
+    decoded = decodeURIComponent(raw);
+  } catch {
+    /* keep raw */
+  }
+  let lat: string | null = null;
+  let lng: string | null = null;
+
+  // /maps/.../@lat,lng[,zoom]
+  const at = decoded.match(/@(-?\d{1,3}(?:\.\d+)?),(-?\d{1,3}(?:\.\d+)?)(?:,[\d.]+z?)?/);
+  if (at) {
+    lat = at[1]!;
+    lng = at[2]!;
+  }
+  // data payload !3dLAT!4dLNG
+  if (!lat) {
+    const bang = decoded.match(/!3d(-?\d{1,3}(?:\.\d+)?)!4d(-?\d{1,3}(?:\.\d+)?)/);
+    if (bang) {
+      lat = bang[1]!;
+      lng = bang[2]!;
+    }
+  }
+  // q=lat,lng or center=lat,lng
+  if (!lat) {
+    const q = decoded.match(/[?&](?:q|center)=(-?\d{1,3}(?:\.\d+)?),(-?\d{1,3}(?:\.\d+)?)/);
+    if (q) {
+      lat = q[1]!;
+      lng = q[2]!;
+    }
+  }
+  if (lat && (Number(lat) < -90 || Number(lat) > 90 || Number(lng) < -180 || Number(lng) > 180)) {
+    lat = null;
+    lng = null;
+  }
+
+  // Readable place name from /maps/place/Some+Place/…
+  let name: string | null = null;
+  const place = decoded.match(/\/maps\/place\/([^/?#]+)/);
+  if (place) {
+    const cleaned = place[1]!
+      .replace(/\/.*$/, '')
+      .replace(/\+/g, ' ')
+      .replace(/@-?\d.*/, '')
+      .trim();
+    if (cleaned && !/^\d/.test(cleaned)) name = cleaned.slice(0, 120);
+  }
+
+  return { lat, lng, name };
+}
+
+/**
+ * Import business details from a Google Maps link.
+ * Coordinates + place name are parsed from the (redirect-resolved) URL — no key
+ * needed. Phone/website/address require GOOGLE_MAPS_API_KEY to be configured;
+ * without it the response returns what the URL itself carried.
+ */
+export async function importGoogleMaps(rawUrl: string): Promise<GoogleMapsImport> {
+  try {
+    const initial = allowedMapsUrl(rawUrl);
+    if (!initial) {
+      return { ok: false, error: 'Paste a Google Maps link (google.com/maps/… or a maps.app.goo.gl share link).' };
+    }
+
+    const resolved = await resolveMapsUrl(initial.toString());
+    const parsed = parseCoordsFromUrl(resolved);
+
+    if (!parsed.lat || !parsed.lng) {
+      return {
+        ok: false,
+        error:
+          'No coordinates found in that link. In Google Maps, right-click the place → Share or embed image → Copy link, and paste it here (you can still enter lat/lng manually).',
+      };
+    }
+
+    const data = {
+      lat: parsed.lat,
+      lng: parsed.lng,
+      name: parsed.name,
+      phone: null as string | null,
+      website: null as string | null,
+      address: null as string | null,
+      resolvedUrl: resolved,
+      source: 'url' as 'places' | 'url',
+    };
+
+    // Optional enrichment (requires GOOGLE_MAPS_API_KEY with Places API enabled).
+    const key = process.env.GOOGLE_MAPS_API_KEY;
+    if (key) {
+      try {
+        // Prefer the placeId embedded in the URL; otherwise look up by coordinates.
+        let placeId = resolved.match(/!1s(ChIJ[\w-]+)/)?.[1] ?? null;
+        if (!placeId) {
+          const search = await fetch('https://places.googleapis.com/v1/places:searchNearby', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': key },
+            body: JSON.stringify({
+              locationRestriction: {
+                circle: { center: { latitude: Number(parsed.lat), longitude: Number(parsed.lng) }, radius: 80 },
+              },
+              includedTypes: ['spa', 'health'],
+              maxResultCount: 1,
+            }),
+            signal: AbortSignal.timeout(8000),
+          }).catch(() => null);
+          if (search?.ok) {
+            const json = (await search.json()) as { places?: { id?: string }[] };
+            placeId = json.places?.[0]?.id ?? null;
+          }
+        }
+        if (placeId) {
+          const details = await fetch(`https://places.googleapis.com/v1/places/${placeId}`, {
+            headers: {
+              'X-Goog-Api-Key': key,
+              'X-Goog-FieldMask': 'displayName,formattedAddress,nationalPhoneNumber,websiteUri',
+            },
+            signal: AbortSignal.timeout(8000),
+          }).catch(() => null);
+          if (details?.ok) {
+            const json = (await details.json()) as {
+              displayName?: { text?: string };
+              formattedAddress?: string;
+              nationalPhoneNumber?: string;
+              websiteUri?: string;
+            };
+            data.name = json.displayName?.text ?? data.name;
+            data.address = json.formattedAddress ?? null;
+            data.phone = json.nationalPhoneNumber ?? null;
+            data.website = json.websiteUri ?? null;
+            data.source = 'places';
+          }
+        }
+      } catch {
+        /* enrichment is best-effort — URL parsing already succeeded */
+      }
+    }
+
+    return { ok: true, data };
+  } catch {
+    return { ok: false, error: 'Could not reach Google Maps to import that link.' };
   }
 }
 
@@ -208,6 +455,8 @@ const treatmentSchema = z.object({
   requiresTherapist: z.boolean(),
   capacity: z.number().int().min(1).max(50),
   agentApproved: z.boolean(),
+  /** Spa-type tags (shared vocabulary with the spa editor). */
+  tags: z.array(z.string().max(60)).max(14).default([]),
   status: z.enum(USER_STATUSES).optional(),
 });
 

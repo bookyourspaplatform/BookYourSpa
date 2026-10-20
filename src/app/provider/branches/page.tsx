@@ -9,7 +9,7 @@ import { BranchManager, type BranchRow } from '@/components/provider/branch-mana
 export const dynamic = 'force-dynamic';
 
 export async function generateMetadata(): Promise<Metadata> {
-  return pageMetadata({ title: 'Branches', description: 'Manage your locations.', path: '/provider/branches', noIndex: true });
+  return pageMetadata({ title: 'Spa Business', description: 'Manage your locations.', path: '/provider/branches', noIndex: true });
 }
 
 export default async function ProviderBranchesPage() {
@@ -47,7 +47,18 @@ export default async function ProviderBranchesPage() {
     currency: b.currency,
     phone: b.phone,
     email: b.email,
+    website: b.website,
+    googleMapsUrl: b.googleMapsUrl,
+    lat: b.lat,
+    lng: b.lng,
+    tagline: b.tagline,
+    shortDescription: b.shortDescription,
+    categories: b.categories ?? [],
+    spaTypes: b.spaTypes ?? [],
+    doorstepService: b.doorstepService,
+    facilities: b.facilities ?? [],
     description: b.description,
+    images: b.images ?? [],
     hours: b.hours,
     leadTimeMinutes: b.leadTimeMinutes,
     maxAdvanceDays: b.maxAdvanceDays,
@@ -63,9 +74,9 @@ export default async function ProviderBranchesPage() {
   return (
     <div className="space-y-5">
       <div>
-        <h1 className="text-xl sm:text-2xl">Branches</h1>
+        <h1 className="text-xl sm:text-2xl">Spa Business</h1>
         <p className="mt-0.5 text-sm text-ink-500">
-          Your outlets on the marketplace — hours, booking rules and payment options live here.
+          Your outlets on the marketplace — details, hours, booking rules and photos live here.
         </p>
       </div>
       <BranchManager branches={rows} />

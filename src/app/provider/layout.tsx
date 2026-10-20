@@ -21,7 +21,7 @@ export default async function ProviderLayout({ children }: { children: ReactNode
     { href: '/provider', label: 'Overview', icon: <LayoutDashboard className="size-4" /> },
     { href: '/provider/calendar', label: 'Calendar', icon: <CalendarDays className="size-4" /> },
     { href: '/provider/bookings', label: 'Bookings', icon: <ClipboardList className="size-4" /> },
-    { href: '/provider/branches', label: 'Branches', icon: <Store className="size-4" /> },
+    { href: '/provider/branches', label: 'Spa Business', icon: <Store className="size-4" /> },
     { href: '/provider/treatments', label: 'Treatments', icon: <Leaf className="size-4" /> },
     { href: '/provider/therapists', label: 'Therapists', icon: <Users className="size-4" /> },
     { href: '/provider/availability', label: 'Availability', icon: <Clock className="size-4" /> },

@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { Search, SlidersHorizontal, MapPin } from 'lucide-react';
 import { getDb } from '@/db';
-import { CATEGORY_LABELS, listSpas } from '@/lib/catalog';
+import { CATEGORY_LABELS, SPA_CATEGORY_LABELS, SPA_TYPE_LABELS, listSpas } from '@/lib/catalog';
 import { pageMetadata, breadcrumbJsonLd, searchResultsJsonLd, appUrl } from '@/lib/seo';
 import { JsonLd } from '@/components/json-ld';
 import { SpaCard } from '@/components/site/spa-card';
@@ -18,6 +18,8 @@ type Search = {
   q?: string;
   city?: string;
   category?: string;
+  spa?: string;
+  type?: string;
   sort?: string;
   page?: string;
   maxPrice?: string;
@@ -34,8 +36,10 @@ export async function generateMetadata({ searchParams }: { searchParams: Promise
   const sp = await searchParams;
   const city = sp.city?.trim();
   const category = sp.category?.trim();
+  const spa = sp.spa?.trim();
   const bits = [
     city ? `in ${city}` : '',
+    spa ? SPA_CATEGORY_LABELS[spa]?.toLowerCase() ?? spa : '',
     category ? CATEGORY_LABELS[category]?.toLowerCase() ?? category : '',
     'spas',
   ].filter(Boolean);
@@ -57,6 +61,8 @@ export default async function SpasPage({ searchParams }: { searchParams: Promise
     q: sp.q,
     city: sp.city,
     category: sp.category,
+    spa: sp.spa,
+    type: sp.type,
     sort: (sp.sort as 'featured' | 'price_asc' | 'price_desc' | 'name') ?? 'featured',
     page: Number(sp.page ?? 1) || 1,
     maxPrice: sp.maxPrice ? Number(sp.maxPrice) : undefined,
@@ -65,6 +71,8 @@ export default async function SpasPage({ searchParams }: { searchParams: Promise
   const base = await appUrl('/spas');
   const activeFilters = [
     sp.city ? { key: 'city', label: sp.city } : null,
+    sp.spa ? { key: 'spa', label: SPA_CATEGORY_LABELS[sp.spa] ?? sp.spa } : null,
+    sp.type ? { key: 'type', label: SPA_TYPE_LABELS[sp.type] ?? sp.type } : null,
     sp.category ? { key: 'category', label: CATEGORY_LABELS[sp.category] ?? sp.category } : null,
     sp.maxPrice ? { key: 'maxPrice', label: `Up to ${sp.maxPrice}` } : null,
     sp.q ? { key: 'q', label: `“${sp.q}”` } : null,
@@ -72,9 +80,11 @@ export default async function SpasPage({ searchParams }: { searchParams: Promise
 
   const pageTitle = sp.city
     ? `Spas in ${sp.city}`
-    : sp.category
-      ? `${CATEGORY_LABELS[sp.category] ?? sp.category} spas`
-      : 'Find your spa';
+    : sp.spa
+      ? `${SPA_CATEGORY_LABELS[sp.spa] ?? sp.spa} spas`
+      : sp.category
+        ? `${CATEGORY_LABELS[sp.category] ?? sp.category} spas`
+        : 'Find your spa';
 
   return (
     <>
@@ -115,6 +125,8 @@ export default async function SpasPage({ searchParams }: { searchParams: Promise
             </div>
             {sp.city && <input type="hidden" name="city" value={sp.city} />}
             {sp.category && <input type="hidden" name="category" value={sp.category} />}
+            {sp.spa && <input type="hidden" name="spa" value={sp.spa} />}
+            {sp.type && <input type="hidden" name="type" value={sp.type} />}
             <button type="submit" className={buttonClasses('primary', 'md')}>
               Search
             </button>
@@ -131,14 +143,46 @@ export default async function SpasPage({ searchParams }: { searchParams: Promise
 
           <div className="space-y-6">
             <div>
+              <h2 className="mb-2.5 text-[13px] font-semibold uppercase tracking-wide text-ink-400">Spa category</h2>
+              <div className="no-scrollbar -mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1 lg:flex-col lg:overflow-visible">
+                <FilterChip label="All spa categories" href={buildHref('/spas', { city: sp.city, category: sp.category, type: sp.type, q: sp.q })} active={!sp.spa} />
+                {results.facets.spaCategories.map((c) => (
+                  <FilterChip
+                    key={c.value}
+                    label={`${c.label} (${c.count})`}
+                    href={buildHref('/spas', { spa: c.value, city: sp.city, category: sp.category, type: sp.type, q: sp.q })}
+                    active={sp.spa === c.value}
+                  />
+                ))}
+              </div>
+            </div>
+
+            {results.facets.spaTypes.length > 0 && (
+              <div>
+                <h2 className="mb-2.5 text-[13px] font-semibold uppercase tracking-wide text-ink-400">Spa type</h2>
+                <div className="no-scrollbar -mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1 lg:flex-col lg:overflow-visible">
+                  <FilterChip label="Any spa type" href={buildHref('/spas', { city: sp.city, spa: sp.spa, category: sp.category, q: sp.q })} active={!sp.type} />
+                  {results.facets.spaTypes.map((t) => (
+                    <FilterChip
+                      key={t.value}
+                      label={`${t.label} (${t.count})`}
+                      href={buildHref('/spas', { type: t.value, city: sp.city, spa: sp.spa, category: sp.category, q: sp.q })}
+                      active={sp.type === t.value}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div>
               <h2 className="mb-2.5 text-[13px] font-semibold uppercase tracking-wide text-ink-400">Treatment</h2>
               <div className="no-scrollbar -mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1 lg:flex-col lg:overflow-visible">
-                <FilterChip label="All treatments" href={buildHref('/spas', { city: sp.city, q: sp.q })} active={!sp.category} />
+                <FilterChip label="All treatments" href={buildHref('/spas', { city: sp.city, spa: sp.spa, type: sp.type, q: sp.q })} active={!sp.category} />
                 {results.facets.categories.map((c) => (
                   <FilterChip
                     key={c.value}
                     label={`${c.label} (${c.count})`}
-                    href={buildHref('/spas', { category: c.value, city: sp.city, q: sp.q })}
+                    href={buildHref('/spas', { category: c.value, spa: sp.spa, type: sp.type, city: sp.city, q: sp.q })}
                     active={sp.category === c.value}
                   />
                 ))}
@@ -148,12 +192,12 @@ export default async function SpasPage({ searchParams }: { searchParams: Promise
             <div>
               <h2 className="mb-2.5 text-[13px] font-semibold uppercase tracking-wide text-ink-400">Destination</h2>
               <div className="no-scrollbar -mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1 lg:flex-col lg:overflow-visible">
-                <FilterChip label="Anywhere" href={buildHref('/spas', { category: sp.category, q: sp.q })} active={!sp.city} />
+                <FilterChip label="Anywhere" href={buildHref('/spas', { category: sp.category, spa: sp.spa, type: sp.type, q: sp.q })} active={!sp.city} />
                 {results.facets.cities.slice(0, 12).map((c) => (
                   <FilterChip
                     key={c.city}
                     label={`${c.city} (${c.count})`}
-                    href={buildHref('/spas', { city: c.city, category: sp.category, q: sp.q })}
+                    href={buildHref('/spas', { city: c.city, category: sp.category, spa: sp.spa, type: sp.type, q: sp.q })}
                     active={sp.city === c.city}
                   />
                 ))}
@@ -167,7 +211,7 @@ export default async function SpasPage({ searchParams }: { searchParams: Promise
                   <FilterChip
                     key={p}
                     label={p === 0 ? 'Any price' : `From provider list · ${p.toLocaleString()}`}
-                    href={buildHref('/spas', { city: sp.city, category: sp.category, q: sp.q, maxPrice: p ? String(p) : undefined })}
+                    href={buildHref('/spas', { city: sp.city, category: sp.category, spa: sp.spa, type: sp.type, q: sp.q, maxPrice: p ? String(p) : undefined })}
                     active={Number(sp.maxPrice ?? 0) === p}
                   />
                 ))}

@@ -5,6 +5,7 @@ export type ButtonVariant =
   | 'primary'
   | 'secondary'
   | 'outline'
+  | 'outlineLight'
   | 'ghost'
   | 'danger'
   | 'warning'
@@ -15,6 +16,10 @@ const VARIANTS: Record<ButtonVariant, string> = {
   primary: 'bg-brand-700 text-white hover:bg-brand-800 active:bg-brand-900 shadow-sm',
   secondary: 'bg-clay-500 text-white hover:bg-clay-600 active:bg-clay-700 shadow-sm',
   outline: 'border border-ink-200 bg-white text-ink-800 hover:border-ink-300 hover:bg-sand-50',
+  // Outline button for DARK backgrounds (hero sections): a single variant, never an
+  // override on top of `outline` — cn() does not de-duplicate clashing utilities,
+  // so overlaid bg-/text- classes resolve by stylesheet order and can go invisible.
+  outlineLight: 'border border-white/40 bg-white/10 text-white hover:border-white/60 hover:bg-white/20',
   ghost: 'text-ink-700 hover:bg-ink-100',
   danger: 'bg-rose-600 text-white hover:bg-rose-700 shadow-sm',
   warning: 'bg-amber-500 text-white hover:bg-amber-600 shadow-sm',

@@ -59,6 +59,7 @@ export default async function ProviderTreatmentsPage() {
     requiresTherapist: t.requiresTherapist,
     capacity: t.capacity,
     agentApproved: t.agentApproved,
+    tags: t.tags ?? [],
     status: t.status,
     branchCount: branchCountByTreatment.get(t.id) ?? 0,
   }));

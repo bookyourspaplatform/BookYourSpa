@@ -65,3 +65,58 @@ export function clientIpOf(req: Request): string {
 export function jsonError(message: string, status = 400, extra?: Record<string, unknown>): NextResponse {
   return NextResponse.json({ error: message, ...extra }, { status });
 }
+
+/** Tags the rich-text editor may emit — everything else is unwrapped or dropped. */
+const RICH_TEXT_ALLOWED = new Set([
+  'p', 'br', 'b', 'strong', 'i', 'em', 'u', 's', 'strike',
+  'h2', 'h3', 'h4', 'ul', 'ol', 'li', 'a', 'blockquote', 'span',
+]);
+
+/**
+ * Sanitize provider-authored rich-text HTML before it reaches the database
+ * (and again before rendering). Strips scripts/event handlers/frames and
+ * unwraps any tag outside a small allowlist. Not a general-purpose HTML
+ * sanitizer — it is deliberately narrow for a fixed editor toolbar.
+ */
+export function sanitizeRichText(html: string): string {
+  let out = html
+    // Whole dangerous elements with their content.
+    .replace(/<(script|style|iframe|object|embed|form|link|meta|svg|math)\b[\s\S]*?<\/\1\s*>/gi, '')
+    .replace(/<(script|style|iframe|object|embed|form|link|meta|svg|math)\b[^>]*\/?>/gi, '')
+    // Event handlers and unsafe URL schemes in attributes.
+    .replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/(href|src)\s*=\s*("|')?\s*javascript:[^"'>\s]*\2?/gi, '$1="#"');
+
+  // Unwrap tags outside the allowlist (keep their inner text).
+  out = out.replace(/<\/?([a-z0-9]+)\b[^>]*>/gi, (match, tag: string) =>
+    RICH_TEXT_ALLOWED.has(tag.toLowerCase()) ? match : '',
+  );
+  // Drop residual attributes on allowed tags except href/title on links.
+  out = out.replace(/<([a-z0-9]+)((?:\s+[a-z-]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+))+?)\s*(\/?)>/gi,
+    (_m, tag: string, attrs: string, selfClose: string) => {
+      const kept: string[] = [];
+      const attrRe = /([a-z-]+)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi;
+      let m: RegExpExecArray | null;
+      while ((m = attrRe.exec(attrs))) {
+        const name = m[1]!.toLowerCase();
+        if (tag.toLowerCase() === 'a' && (name === 'href' || name === 'title')) kept.push(`${name}=${m[2]}`);
+        if (name === 'class') kept.push(`${name}=${m[2]}`);
+      }
+      const tail = kept.length ? ` ${kept.join(' ')}` : '';
+      return `<${tag}${tail}${selfClose ? ' /' : ''}>`;
+    },
+  );
+  return out.trim();
+}
+
+/** Plain-text version of rich text — for meta descriptions and JSON-LD. */
+export function stripHtml(html: string): string {
+  return html
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/\s+/g, ' ')
+    .trim();
+}

@@ -16,7 +16,7 @@ export type { BranchRow };
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export function BranchManager({ branches }: { branches: BranchRow[] }) {
-  const [editing, setEditing] = useState<BranchRow | null>(null);
+  const [editing, setEditing] = useState<BranchRow | 'create' | null>(null);
   const [pending, startTransition] = useTransition();
   const router = useRouter();
   const toast = useToast();
@@ -40,8 +40,8 @@ export function BranchManager({ branches }: { branches: BranchRow[] }) {
         <p className="text-sm text-ink-500">
           {branches.length} location{branches.length === 1 ? '' : 's'} · each branch owns its own hours, prices and team.
         </p>
-        <button type="button" onClick={() => setEditing(EMPTY_ROW)} className={buttonClasses('primary', 'md')}>
-          <Plus className="size-4" /> New branch
+        <button type="button" onClick={() => setEditing('create')} className={buttonClasses('primary', 'md')}>
+          <Plus className="size-4" /> New spa business
         </button>
       </div>
 
@@ -49,9 +49,9 @@ export function BranchManager({ branches }: { branches: BranchRow[] }) {
         <div className="rounded-3xl border border-dashed border-ink-200 bg-white px-6 py-14 text-center">
           <Store className="mx-auto size-8 text-ink-300" />
           <p className="mt-3 text-[15px] font-medium">Add your first location</p>
-          <p className="mt-1 text-sm text-ink-500">Branches are what customers see and book on the marketplace.</p>
-          <button type="button" onClick={() => setEditing(EMPTY_ROW)} className={buttonClasses('primary', 'md', 'mt-4')}>
-            <Plus className="size-4" /> New branch
+          <p className="mt-1 text-sm text-ink-500">Spa businesses are what customers see and book on the marketplace.</p>
+          <button type="button" onClick={() => setEditing('create')} className={buttonClasses('primary', 'md', 'mt-4')}>
+            <Plus className="size-4" /> New spa business
           </button>
         </div>
       ) : (
@@ -116,33 +116,12 @@ export function BranchManager({ branches }: { branches: BranchRow[] }) {
       )}
 
       {editing !== null && (
-        <BranchEditor key={editing.id || 'new'} branch={editing.id ? editing : null} onClose={() => setEditing(null)} />
+        <BranchEditor
+          key={editing === 'create' ? 'new' : editing.id}
+          branch={editing === 'create' ? null : editing}
+          onClose={() => setEditing(null)}
+        />
       )}
     </div>
   );
 }
-
-/** Placeholder row used only to open the editor in "create" mode. */
-const EMPTY_ROW: BranchRow = {
-  id: '',
-  name: '',
-  addressLine: '',
-  city: '',
-  region: null,
-  country: 'ID',
-  timezone: 'Asia/Makassar',
-  currency: 'IDR',
-  phone: null,
-  email: null,
-  description: null,
-  hours: [],
-  leadTimeMinutes: 60,
-  maxAdvanceDays: 90,
-  bufferMinutes: 0,
-  slotIntervalMinutes: 30,
-  onlinePaymentEnabled: true,
-  paymentMethods: ['stripe', 'paypal', 'razorpay', 'venue'],
-  status: 'active',
-  treatmentCount: 0,
-  therapistCount: 0,
-};

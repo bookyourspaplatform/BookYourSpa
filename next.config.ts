@@ -19,7 +19,7 @@ const nextConfig: NextConfig = {
       "default-src 'self'",
       // Next injects inline bootstrap/styles; gateways need their own origins.
       "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://js.stripe.com https://www.paypal.com https://apis.google.com https://checkout.razorpay.com https://lumberjack.razorpay.com",
-      "frame-src 'self' https://js.stripe.com https://www.paypal.com https://api.razorpay.com https://checkout.razorpay.com",
+      "frame-src 'self' https://js.stripe.com https://www.paypal.com https://api.razorpay.com https://checkout.razorpay.com https://maps.google.com https://www.google.com",
       "connect-src 'self' https://api.stripe.com https://www.paypal.com https://api.razorpay.com",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob: https:",

@@ -93,6 +93,53 @@ export type DiscountType = (typeof DISCOUNT_TYPES)[number];
 export const PROMO_POSITIONS = ['hero', 'banner', 'deal'] as const;
 export type PromoPosition = (typeof PROMO_POSITIONS)[number];
 
+export const SPA_CATEGORIES = [
+  'day_spa',
+  'hotel_resort_spa',
+  'doorstep_spa',
+  'wellness_center',
+  'beauty_spa',
+  'medical_spa',
+] as const;
+export type SpaCategory = (typeof SPA_CATEGORIES)[number];
+
+export const SPA_TYPES = [
+  'massages',
+  'body_treatment',
+  'facials_skincare',
+  'beauty_treatment',
+  'sauna_thermal',
+  'hydrotherapy',
+  'hammam_bath',
+  'wellness_therapies',
+  'yoga_pilates',
+  'foot_reflexology',
+  'relaxation_healing',
+  'retreats_packages',
+  'couples_romantic',
+  'sensual_wellness',
+] as const;
+export type SpaType = (typeof SPA_TYPES)[number];
+
+export const SPA_FACILITIES = [
+  'sauna',
+  'steam_room',
+  'jacuzzi',
+  'plunge_pool',
+  'swimming_pool',
+  'gym',
+  'spa_lounge',
+  'showers',
+  'lockers',
+  'wifi',
+  'parking',
+  'restaurant',
+  'garden',
+  'couple_rooms',
+  'private_rooms',
+] as const;
+export type SpaFacility = (typeof SPA_FACILITIES)[number];
+
 export const EMAIL_STATUSES = ['queued', 'sent', 'failed', 'skipped'] as const;
 export type EmailStatus = (typeof EMAIL_STATUSES)[number];
 
@@ -195,9 +242,32 @@ export const branches = pgTable(
     currency: text('currency').notNull().default('IDR'),
     phone: text('phone'),
     email: text('email'),
+    website: text('website'),
     lat: text('lat'),
     lng: text('lng'),
     images: text('images').array().notNull().default(sql`'{}'::text[]`),
+    /** Google Maps share/place link — the import source for lat/lng and details. */
+    googleMapsUrl: text('google_maps_url'),
+    /** CTA / branding words shown on the spa card. */
+    tagline: text('tagline'),
+    /** Up to 160 chars — doubles as the SEO description for the branch page. */
+    shortDescription: text('short_description'),
+    /** Spa business categories (shown on the search bar + spa card). */
+    categories: text('categories', { enum: SPA_CATEGORIES })
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    /** Service types (shown on the search bar and treatment forms). */
+    spaTypes: text('spa_types', { enum: SPA_TYPES })
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    /** Therapists travel to the guest (massage on call / doorstep). */
+    doorstepService: boolean('doorstep_service').notNull().default(false),
+    facilities: text('facilities', { enum: SPA_FACILITIES })
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
     description: text('description'),
     /** Weekly opening hours in branch-local time. */
     hours: jsonb('hours').$type<BranchHour[]>().notNull().default([]),

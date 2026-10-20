@@ -4,6 +4,8 @@ import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Pencil, Plus, Sparkles } from 'lucide-react';
 import { saveTreatment, setTreatmentStatus } from '@/lib/actions/provider';
+import { SPA_TYPES } from '@/db/schema';
+import { SPA_TYPE_LABELS } from '@/lib/catalog';
 import { Modal } from '@/components/ui/modal';
 import { Button, buttonClasses } from '@/components/ui/button';
 import { Field, Input, Textarea, Select } from '@/components/ui/field';
@@ -23,6 +25,7 @@ export type TreatmentRow = {
   requiresTherapist: boolean;
   capacity: number;
   agentApproved: boolean;
+  tags: string[];
   status: string;
   branchCount: number;
 };
@@ -52,6 +55,7 @@ type Draft = {
   requiresTherapist: boolean;
   capacity: number;
   agentApproved: boolean;
+  tags: string[];
   status: string;
 };
 
@@ -64,6 +68,7 @@ const EMPTY: Draft = {
   requiresTherapist: true,
   capacity: 1,
   agentApproved: false,
+  tags: [],
   status: 'active',
 };
 
@@ -90,6 +95,7 @@ export function TreatmentManager({ treatments, currency }: { treatments: Treatme
       requiresTherapist: t.requiresTherapist,
       capacity: t.capacity,
       agentApproved: t.agentApproved,
+      tags: t.tags ?? [],
       status: t.status,
     });
     setOpen(true);
@@ -111,6 +117,7 @@ export function TreatmentManager({ treatments, currency }: { treatments: Treatme
         requiresTherapist: draft.requiresTherapist,
         capacity: Number(draft.capacity),
         agentApproved: draft.agentApproved,
+        tags: draft.tags,
         status: draft.status as 'active' | 'pending',
       });
       if (res.ok) {
@@ -233,6 +240,32 @@ export function TreatmentManager({ treatments, currency }: { treatments: Treatme
               <Textarea id={id} value={draft.description} onChange={(e) => set('description', e.target.value)} maxLength={2000} placeholder="Benefits, technique, ideal for…" />
             )}
           </Field>
+        </div>
+
+        <div className="mt-4">
+          <p className="text-[13px] font-semibold text-ink-700">Spa type tags</p>
+          <p className="mt-0.5 text-[12.5px] text-ink-500">Shown to guests when they filter the search bar by spa type.</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {SPA_TYPES.map((t) => {
+              const on = draft.tags.includes(t);
+              return (
+                <button
+                  key={t}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() =>
+                    set('tags', on ? draft.tags.filter((x) => x !== t) : [...draft.tags, t])
+                  }
+                  className={cn(
+                    'rounded-full border px-3 py-1.5 text-[12.5px] font-medium transition',
+                    on ? 'border-brand-600 bg-brand-50 text-brand-800' : 'border-ink-200 bg-white text-ink-500 hover:border-ink-300',
+                  )}
+                >
+                  {SPA_TYPE_LABELS[t] ?? t}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2">

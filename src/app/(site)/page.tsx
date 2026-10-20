@@ -1,7 +1,15 @@
 import Link from 'next/link';
 import { ArrowRight, CalendarCheck, Handshake, ReceiptText, Ticket, LayoutGrid } from 'lucide-react';
 import { getDb } from '@/db';
-import { listCategoryCounts, listCities, listPromotions, listPublicCoupons, listSpas } from '@/lib/catalog';
+import {
+  listCategoryCounts,
+  listCities,
+  listPromotions,
+  listPublicCoupons,
+  listSpaCategoryCounts,
+  listSpaTypeCounts,
+  listSpas,
+} from '@/lib/catalog';
 import { getSettings } from '@/lib/settings';
 import { organizationJsonLd, webSiteJsonLd, appUrl } from '@/lib/seo';
 import { JsonLd } from '@/components/json-ld';
@@ -15,9 +23,11 @@ export const dynamic = 'force-dynamic';
 
 export default async function HomePage() {
   const db = await getDb();
-  const [cities, categories, spas, promos, coupons, settings] = await Promise.all([
+  const [cities, categories, spaCategories, spaTypes, spas, promos, coupons, settings] = await Promise.all([
     listCities(db),
     listCategoryCounts(db),
+    listSpaCategoryCounts(db),
+    listSpaTypeCounts(db),
     listSpas(db, { sort: 'featured', pageSize: 6 }),
     listPromotions(db, { limit: 4 }),
     listPublicCoupons(db),
@@ -35,6 +45,8 @@ export default async function HomePage() {
       <SearchHero
         cities={cities}
         categories={categories}
+        spaCategories={spaCategories}
+        spaTypes={spaTypes}
         announcement={settings['site.announcement'] || undefined}
       />
 

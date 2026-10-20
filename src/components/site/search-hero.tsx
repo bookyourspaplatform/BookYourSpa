@@ -7,10 +7,14 @@ import { CATEGORY_LABELS } from '@/lib/catalog';
 export function SearchHero({
   cities,
   categories,
+  spaCategories,
+  spaTypes,
   announcement,
 }: {
   cities: { city: string; count: number }[];
   categories: { value: string; count: number }[];
+  spaCategories?: { value: string; label: string; count: number }[];
+  spaTypes?: { value: string; label: string; count: number }[];
   announcement?: string;
 }) {
   return (
@@ -47,7 +51,7 @@ export function SearchHero({
           method="get"
           className="mt-8 rounded-3xl border border-brand-600/60 bg-white p-3 shadow-2xl sm:rounded-full sm:p-2"
         >
-          <div className="grid gap-2 sm:grid-cols-[1.1fr_1fr_auto] sm:items-center">
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_1fr_auto] lg:items-center">
             <label className="sr-only" htmlFor="hero-city">
               Destination
             </label>
@@ -61,6 +65,23 @@ export function SearchHero({
               {cities.map((c) => (
                 <option key={c.city} value={c.city}>
                   {c.city} ({c.count})
+                </option>
+              ))}
+            </select>
+
+            <label className="sr-only" htmlFor="hero-spa-type">
+              Spa category
+            </label>
+            <select
+              id="hero-spa-type"
+              name="spa"
+              className={inputCls() + ' border-ink-100'}
+              defaultValue=""
+            >
+              <option value="">Any spa category</option>
+              {(spaCategories ?? []).map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label} ({c.count})
                 </option>
               ))}
             </select>
@@ -81,6 +102,27 @@ export function SearchHero({
                 </option>
               ))}
             </select>
+
+            {(spaTypes ?? []).length > 0 && (
+              <>
+                <label className="sr-only" htmlFor="hero-spa-type-kind">
+                  Spa type
+                </label>
+                <select
+                  id="hero-spa-type-kind"
+                  name="type"
+                  className={inputCls() + ' border-ink-100'}
+                  defaultValue=""
+                >
+                  <option value="">Any spa type</option>
+                  {spaTypes!.map((t) => (
+                    <option key={t.value} value={t.value}>
+                      {t.label} ({t.count})
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
 
             <button type="submit" className={buttonClasses('secondary', 'lg', 'sm:w-auto w-full sm:mx-1')}>
               <Search className="size-4" />
@@ -105,7 +147,7 @@ export function SearchHero({
           <Link href="/spas" className={buttonClasses('primary', 'lg')}>
             Browse all spas
           </Link>
-          <Link href="/register/provider" className={buttonClasses('outline', 'lg', 'bg-transparent text-white border-brand-500 hover:bg-brand-800')}>
+          <Link href="/register/provider" className={buttonClasses('outlineLight', 'lg')}>
             List your spa
           </Link>
         </div>

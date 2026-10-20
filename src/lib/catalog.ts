@@ -34,13 +34,24 @@ export type SpaListItem = {
   cities: string[];
   branches: Pick<Branch, 'id' | 'name' | 'slug' | 'city' | 'country' | 'currency'>[];
   minPrice: number | null;
+  /** Treatment categories aggregated across branches (legacy chips). */
   categories: string[];
+  /** Spa business categories from the branch editor (union across branches). */
+  spaCategories: string[];
+  /** Spa types from the branch editor (union across branches). */
+  spaTypes: string[];
+  /** 160-char SEO/card description — first active branch that has one. */
+  shortDescription: string | null;
 };
 
 export type SpaFilters = {
   q?: string;
   city?: string;
   category?: string;
+  /** Spa business category (day_spa, hotel_resort_spa, …). */
+  spa?: string;
+  /** Spa type (massages, hammam_bath, …). */
+  type?: string;
   minPrice?: number;
   maxPrice?: number;
   sort?: 'featured' | 'price_asc' | 'price_desc' | 'name';
@@ -59,18 +70,91 @@ export const CATEGORY_LABELS: Record<string, string> = {
   package: 'Packages',
 };
 
+export const SPA_CATEGORY_LABELS: Record<string, string> = {
+  day_spa: 'Day Spa',
+  hotel_resort_spa: 'Hotel & Resort Spa',
+  doorstep_spa: 'Massage on Call / Doorstep Spa',
+  wellness_center: 'Wellness Center',
+  beauty_spa: 'Beauty Spa',
+  medical_spa: 'Medical Spa',
+};
+
+export const SPA_TYPE_LABELS: Record<string, string> = {
+  massages: 'Massages',
+  body_treatment: 'Body Treatment',
+  facials_skincare: 'Facials & Skincare',
+  beauty_treatment: 'Beauty Treatment',
+  sauna_thermal: 'Sauna & Thermal',
+  hydrotherapy: 'Hydrotherapy',
+  hammam_bath: 'Hammam & Bath Ritual',
+  wellness_therapies: 'Wellness Therapies',
+  yoga_pilates: 'Yoga & Pilates',
+  foot_reflexology: 'Foot Care & Reflexology',
+  relaxation_healing: 'Relaxation & Healing',
+  retreats_packages: 'Wellness Retreats & Packages',
+  couples_romantic: 'Couples & Romantic Spa',
+  sensual_wellness: 'Sensual Wellness',
+};
+
+export const SPA_FACILITY_LABELS: Record<string, string> = {
+  sauna: 'Sauna',
+  steam_room: 'Steam room',
+  jacuzzi: 'Jacuzzi / hot tub',
+  plunge_pool: 'Cold plunge',
+  swimming_pool: 'Swimming pool',
+  gym: 'Gym',
+  spa_lounge: 'Relaxation lounge',
+  showers: 'Showers',
+  lockers: 'Lockers',
+  wifi: 'Free Wi-Fi',
+  parking: 'Parking',
+  restaurant: 'Café / restaurant',
+  garden: 'Garden',
+  couple_rooms: 'Couples room',
+  private_rooms: 'Private room',
+};
+
 const activeCatalog = and(
   eq(providers.status, 'approved'),
 );
 
-type ProviderRow = Provider & { branches: Pick<Branch, 'id' | 'name' | 'slug' | 'city' | 'country' | 'currency' | 'status'>[] };
+type ProviderRow = Provider & {
+  branches: Pick<
+    Branch,
+    | 'id'
+    | 'name'
+    | 'slug'
+    | 'city'
+    | 'country'
+    | 'currency'
+    | 'status'
+    | 'tagline'
+    | 'shortDescription'
+    | 'categories'
+    | 'spaTypes'
+    | 'images'
+  >[];
+};
 
 export async function listSpas(db: AppDb, filters: SpaFilters = {}) {
   const providerRows = (await db.query.providers.findMany({
     where: activeCatalog,
     with: {
       branches: {
-        columns: { id: true, name: true, slug: true, city: true, country: true, currency: true, status: true },
+        columns: {
+          id: true,
+          name: true,
+          slug: true,
+          city: true,
+          country: true,
+          currency: true,
+          status: true,
+          tagline: true,
+          shortDescription: true,
+          categories: true,
+          spaTypes: true,
+          images: true,
+        },
         where: eq(branches.status, 'active'),
       },
     },
@@ -116,14 +200,18 @@ export async function listSpas(db: AppDb, filters: SpaFilters = {}) {
   let items: SpaListItem[] = providerRows.map((p) => {
     const agg = aggByProvider.get(p.id);
     const cities = [...new Set(p.branches.map((b) => b.city))];
+    const spaCategories = [...new Set(p.branches.flatMap((b) => b.categories ?? []))];
+    const spaTypes = [...new Set(p.branches.flatMap((b) => b.spaTypes ?? []))];
+    const first = p.branches.find((b) => b.shortDescription?.trim()) ?? p.branches[0];
+    const coverFromBranch = p.branches.find((b) => (b.images ?? []).length > 0)?.images[0] ?? null;
     return {
       id: p.id,
       slug: p.slug,
       name: p.name,
-      tagline: p.tagline,
+      tagline: p.tagline ?? p.branches.find((b) => b.tagline?.trim())?.tagline ?? null,
       description: p.description,
       logoUrl: p.logoUrl,
-      coverUrl: p.coverUrl,
+      coverUrl: p.coverUrl ?? coverFromBranch,
       country: p.country,
       baseCurrency: p.baseCurrency,
       featured: p.featured || (p.featuredUntil ? p.featuredUntil.getTime() > Date.now() : false),
@@ -132,6 +220,9 @@ export async function listSpas(db: AppDb, filters: SpaFilters = {}) {
       branches: p.branches,
       minPrice: agg?.minPrice ?? null,
       categories: agg?.categories ?? [],
+      spaCategories,
+      spaTypes,
+      shortDescription: first?.shortDescription ?? null,
     };
   });
 
@@ -141,12 +232,25 @@ export async function listSpas(db: AppDb, filters: SpaFilters = {}) {
   const categoryFacet = new Map<string, number>();
   for (const [, agg] of aggByProvider)
     for (const c of agg.categories) categoryFacet.set(c, (categoryFacet.get(c) ?? 0) + 1);
+  const spaFacet = new Map<string, number>();
+  for (const item of items) for (const c of item.spaCategories) spaFacet.set(c, (spaFacet.get(c) ?? 0) + 1);
+  const spaTypeFacet = new Map<string, number>();
+  for (const item of items) for (const t of item.spaTypes) spaTypeFacet.set(t, (spaTypeFacet.get(t) ?? 0) + 1);
   const totalAll = items.length;
 
   const q = filters.q?.trim().toLowerCase();
   if (q) {
     items = items.filter((i) =>
-      [i.name, i.tagline ?? '', i.description ?? '', ...i.cities, ...i.branches.map((b) => b.name)]
+      [
+        i.name,
+        i.tagline ?? '',
+        i.shortDescription ?? '',
+        i.description ?? '',
+        ...i.spaCategories.map((c) => SPA_CATEGORY_LABELS[c] ?? c),
+        ...i.spaTypes.map((t) => SPA_TYPE_LABELS[t] ?? t),
+        ...i.cities,
+        ...i.branches.map((b) => b.name),
+      ]
         .join(' ')
         .toLowerCase()
         .includes(q),
@@ -158,6 +262,12 @@ export async function listSpas(db: AppDb, filters: SpaFilters = {}) {
   }
   if (filters.category) {
     items = items.filter((i) => i.categories.includes(filters.category!));
+  }
+  if (filters.spa) {
+    items = items.filter((i) => i.spaCategories.includes(filters.spa!));
+  }
+  if (filters.type) {
+    items = items.filter((i) => i.spaTypes.includes(filters.type!));
   }
   if (typeof filters.minPrice === 'number') items = items.filter((i) => (i.minPrice ?? Infinity) >= filters.minPrice!);
   if (typeof filters.maxPrice === 'number') items = items.filter((i) => (i.minPrice ?? 0) <= filters.maxPrice!);
@@ -180,6 +290,12 @@ export async function listSpas(db: AppDb, filters: SpaFilters = {}) {
   const allCategories = [...categoryFacet.entries()]
     .map(([value, count]) => ({ value, label: CATEGORY_LABELS[value] ?? value, count }))
     .sort((a, b) => a.label.localeCompare(b.label));
+  const allSpaCategories = [...spaFacet.entries()]
+    .map(([value, count]) => ({ value, label: SPA_CATEGORY_LABELS[value] ?? value, count }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+  const allSpaTypes = [...spaTypeFacet.entries()]
+    .map(([value, count]) => ({ value, label: SPA_TYPE_LABELS[value] ?? value, count }))
+    .sort((a, b) => a.label.localeCompare(b.label));
 
   return {
     items: paged,
@@ -191,6 +307,8 @@ export async function listSpas(db: AppDb, filters: SpaFilters = {}) {
     facets: {
       cities: allCities,
       categories: allCategories,
+      spaCategories: allSpaCategories,
+      spaTypes: allSpaTypes,
       priceRange: {
         min: Math.min(...items.map((i) => i.minPrice ?? Infinity).filter(Number.isFinite), Infinity),
         max: Math.max(...items.map((i) => i.minPrice ?? 0), 0),
@@ -328,6 +446,40 @@ export async function listCategoryCounts(db: AppDb): Promise<{ value: string; la
     .groupBy(treatments.category);
   return rows
     .map((r) => ({ value: r.category, label: CATEGORY_LABELS[r.category] ?? r.category, count: r.count ?? 0 }))
+    .sort((a, b) => b.count - a.count);
+}
+
+/** Spa business categories for the search bar (approved providers, active branches). */
+export async function listSpaCategoryCounts(db: AppDb): Promise<{ value: string; label: string; count: number }[]> {
+  const rows = await db
+    .select({ cat: branches.categories, count: sql<number>`count(distinct ${branches.id})::int` })
+    .from(branches)
+    .innerJoin(providers, eq(providers.id, branches.providerId))
+    .where(and(eq(branches.status, 'active'), eq(providers.status, 'approved')))
+    .groupBy(branches.categories);
+  const facet = new Map<string, number>();
+  for (const r of rows) {
+    for (const c of r.cat ?? []) facet.set(c, (facet.get(c) ?? 0) + (r.count ?? 0));
+  }
+  return [...facet.entries()]
+    .map(([value, count]) => ({ value, label: SPA_CATEGORY_LABELS[value] ?? value, count }))
+    .sort((a, b) => b.count - a.count);
+}
+
+/** Spa types for the search bar (approved providers, active branches). */
+export async function listSpaTypeCounts(db: AppDb): Promise<{ value: string; label: string; count: number }[]> {
+  const rows = await db
+    .select({ t: branches.spaTypes, count: sql<number>`count(distinct ${branches.id})::int` })
+    .from(branches)
+    .innerJoin(providers, eq(providers.id, branches.providerId))
+    .where(and(eq(branches.status, 'active'), eq(providers.status, 'approved')))
+    .groupBy(branches.spaTypes);
+  const facet = new Map<string, number>();
+  for (const r of rows) {
+    for (const t of r.t ?? []) facet.set(t, (facet.get(t) ?? 0) + (r.count ?? 0));
+  }
+  return [...facet.entries()]
+    .map(([value, count]) => ({ value, label: SPA_TYPE_LABELS[value] ?? value, count }))
     .sort((a, b) => b.count - a.count);
 }
 
