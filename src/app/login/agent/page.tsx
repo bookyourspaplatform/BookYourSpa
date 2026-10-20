@@ -20,7 +20,7 @@ export default async function AgentLoginPage({
       role="agent"
       title="Agent portal"
       subtitle="Approved products, your negotiated rates and client bookings."
-      demo={process.env.NODE_ENV !== 'production' ? { email: 'agent@balibliss.com', password: 'Agent1234!' } : null}
+      demo={process.env.NODE_ENV !== 'production' ? { email: 'info@balithingstodo.net', password: 'BTTD154@bys' } : null}
       footer={
         <p>
           Sell spas with us?{' '}

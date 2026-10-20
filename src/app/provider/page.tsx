@@ -30,13 +30,14 @@ export default async function ProviderOverview() {
   sixMonthsAgo.setUTCDate(1);
   sixMonthsAgo.setUTCHours(0, 0, 0, 0);
   sixMonthsAgo.setUTCMonth(sixMonthsAgo.getUTCMonth() - 5);
+  const now = new Date();
 
   const [upcoming, monthAgg, trend, counts, pendingCount] = await Promise.all([
     db.query.bookings.findMany({
       where: and(
         eq(bookings.providerId, providerId),
         inArray(bookings.status, [...ACTIVE]),
-        gte(bookings.startAt, new Date(Date.now() - 10 * 3600_000)),
+        gte(bookings.startAt, new Date(now.getTime() - 10 * 3600_000)),
       ),
       orderBy: [bookings.startAt],
       limit: 80,
@@ -84,7 +85,8 @@ export default async function ProviderOverview() {
     db.select({ n: sql<number>`count(*)::int` }).from(bookings).where(and(eq(bookings.providerId, providerId), eq(bookings.status, 'pending'))),
   ]);
 
-  const todays = upcoming.filter((b) => dateKeyInTz(b.startAt, b.timezone) === dateKeyInTz(new Date(), b.timezone));  const upcoming7 = upcoming.filter((b) => b.startAt.getTime() < Date.now() + 7 * 86400_000);
+  const todays = upcoming.filter((b) => dateKeyInTz(b.startAt, b.timezone) === dateKeyInTz(now, b.timezone));
+  const upcoming7 = upcoming.filter((b) => b.startAt.getTime() < now.getTime() + 7 * 86400_000);
   const thisMonth = monthAgg[0];
   const monthTotal = Number(thisMonth?.total ?? 0);
 

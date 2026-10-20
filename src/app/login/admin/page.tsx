@@ -20,7 +20,7 @@ export default async function AdminLoginPage({
       role="super_admin"
       title="Platform administration"
       subtitle="Restricted area — authorised operators only."
-      demo={process.env.NODE_ENV !== 'production' ? { email: 'admin@bookyourspa.net', password: 'Admin1234!' } : null}
+      demo={process.env.NODE_ENV !== 'production' ? { email: 'portal@bookyourspa.net', password: 'BYS154@bys' } : null}
       footer={
         <p>
           Not an administrator?{' '}

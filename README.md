@@ -48,11 +48,11 @@ npm run db:reset    # wipe the LOCAL database and re-seed (never touches DATABAS
 
 | Role | Email | Password |
 | --- | --- | --- |
-| Super Admin | `admin@bookyourspa.net` | `Admin1234!` |
-| Supplier / POS | `owner@aranjaya.com` | `Provider1234!` |
-| Supplier / POS (Dubai, AED) | `owner@serenity.ae` | `Provider1234!` |
-| Agent / Reseller | `agent@balibliss.com` | `Agent1234!` |
-| Customer | `customer@example.com` | `Customer1234!` |
+| Super Admin | `portal@bookyourspa.net` | `BYS154@bys` |
+| Supplier / POS (Dubai, AED) | `booking@homecarespa.ae` | `HCS154@bys` |
+| Supplier / POS | `owner@aranjaya.com` | `HCS154@bys` |
+| Agent / Reseller | `info@balithingstodo.net` | `BTTD154@bys` |
+| Customer | `appsdaeng@gmail.com` | `apps154@bys` |
 
 Coupons: `WELCOME10` · `BALI20` · `SEMINYAK50`.
 
@@ -146,7 +146,7 @@ overwrite existing data unless you pass `--force`:
 DATABASE_URL="<production pooled url>" npm run db:seed
 ```
 
-This creates the Super Admin (`admin@bookyourspa.net`), demo suppliers/agents and
+This creates the Super Admin (`portal@bookyourspa.net`), demo suppliers/agents and
 sample content so the consoles are populated. **Change the seeded passwords
 immediately** (Admin → System) before opening the platform to real users.
 

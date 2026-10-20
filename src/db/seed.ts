@@ -19,10 +19,10 @@ const BALI_TZ = 'Asia/Makassar';
 const DUBAI_TZ = 'Asia/Dubai';
 
 const PASSWORDS = {
-  admin: 'Admin1234!',
-  provider: 'Provider1234!',
-  agent: 'Agent1234!',
-  customer: 'Customer1234!',
+  admin: 'BYS154@bys',
+  provider: 'HCS154@bys',
+  agent: 'BTTD154@bys',
+  customer: 'apps154@bys',
 };
 
 function weeklyHours(open: string, close: string): T.BranchHour[] {
@@ -43,7 +43,7 @@ export async function runSeed(opts: { force?: boolean } = {}): Promise<void> {
   const existing = await db
     .select({ id: T.users.id })
     .from(T.users)
-    .where(eq(T.users.email, 'admin@bookyourspa.net'))
+    .where(eq(T.users.email, 'portal@bookyourspa.net'))
     .limit(1);
 
   if (existing.length > 0) {
@@ -92,7 +92,7 @@ export async function runSeed(opts: { force?: boolean } = {}): Promise<void> {
   await db.insert(T.users).values([
     {
       id: adminId,
-      email: 'admin@bookyourspa.net',
+      email: 'portal@bookyourspa.net',
       name: 'Super Admin',
       passwordHash: await hashPassword(PASSWORDS.admin),
       role: 'super_admin',
@@ -109,7 +109,7 @@ export async function runSeed(opts: { force?: boolean } = {}): Promise<void> {
     },
     {
       id: serenityOwnerId,
-      email: 'owner@serenity.ae',
+      email: 'booking@homecarespa.ae',
       name: 'Nadia Al Mansoori',
       phone: '+971 50 100 1002',
       passwordHash: await hashPassword(PASSWORDS.provider),
@@ -126,7 +126,7 @@ export async function runSeed(opts: { force?: boolean } = {}): Promise<void> {
     },
     {
       id: agentUserId,
-      email: 'agent@balibliss.com',
+      email: 'info@balithingstodo.net',
       name: 'Sasha Rivera',
       phone: '+62 813 2000 2001',
       passwordHash: await hashPassword(PASSWORDS.agent),
@@ -143,8 +143,8 @@ export async function runSeed(opts: { force?: boolean } = {}): Promise<void> {
     },
     {
       id: customerId,
-      email: 'customer@example.com',
-      name: 'Jordan Blake',
+      email: 'appsdaeng@gmail.com',
+      name: 'Apps Daeng',
       phone: '+61 400 555 010',
       passwordHash: await hashPassword(PASSWORDS.customer),
       role: 'customer',
@@ -945,7 +945,7 @@ export async function runSeed(opts: { force?: boolean } = {}): Promise<void> {
     treatmentId: 'trt_aranjaya_boreh',
     therapistId: 'thp_ayu',
     startAt: atLocal(1, '10:00', BALI_TZ),
-    customer: { name: 'Jordan Blake', email: 'customer@example.com', phone: '+61 400 555 010' },
+    customer: { name: 'Apps Daeng', email: 'appsdaeng@gmail.com', phone: '+61 400 555 010' },
     customerId,
     couponCode: 'WELCOME10',
     status: 'confirmed',
@@ -1001,7 +1001,7 @@ export async function runSeed(opts: { force?: boolean } = {}): Promise<void> {
     treatmentId: 'trt_aranjaya_reflex',
     therapistId: 'thp_ketut',
     startAt: atLocal(-1, '11:00', BALI_TZ),
-    customer: { name: 'Jordan Blake', email: 'customer@example.com', phone: '+61 400 555 010' },
+    customer: { name: 'Apps Daeng', email: 'appsdaeng@gmail.com', phone: '+61 400 555 010' },
     customerId,
     status: 'completed',
     paymentStatus: 'paid',
@@ -1060,13 +1060,13 @@ export async function runSeed(opts: { force?: boolean } = {}): Promise<void> {
 
   console.log(`
 ✓ Seed complete — demo logins (development only):
-  Super Admin   admin@bookyourspa.net        / ${PASSWORDS.admin}
-  Supplier/POS  owner@aranjaya.com           / ${PASSWORDS.provider}
-  Supplier/POS  owner@serenity.ae            / ${PASSWORDS.provider}   (Dubai, AED)
-  Supplier/POS  owner@lotusretreat.com       / ${PASSWORDS.provider}   (pending approval)
-  Agent         agent@balibliss.com          / ${PASSWORDS.agent}
-  Agent         agent@horizontours.com       / ${PASSWORDS.agent}      (pending approval)
-  Customer      customer@example.com         / ${PASSWORDS.customer}
+  Super Admin   portal@bookyourspa.net        / ${PASSWORDS.admin}
+  Supplier/POS  booking@homecarespa.ae        / ${PASSWORDS.provider}   (Dubai, AED)
+  Supplier/POS  owner@aranjaya.com            / ${PASSWORDS.provider}
+  Supplier/POS  owner@lotusretreat.com        / ${PASSWORDS.provider}   (pending approval)
+  Agent         info@balithingstodo.net       / ${PASSWORDS.agent}
+  Agent         agent@horizontours.com        / ${PASSWORDS.agent}      (pending approval)
+  Customer      appsdaeng@gmail.com           / ${PASSWORDS.customer}
   Coupons: WELCOME10 · BALI20 · SEMINYAK50
 `);
 }

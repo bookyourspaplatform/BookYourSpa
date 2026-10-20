@@ -20,7 +20,7 @@ export default async function ProviderLoginPage({
       role="provider"
       title="Supplier console"
       subtitle="Branches, menus, therapists, calendars and earnings."
-      demo={process.env.NODE_ENV !== 'production' ? { email: 'owner@aranjaya.com', password: 'Provider1234!' } : null}
+      demo={process.env.NODE_ENV !== 'production' ? { email: 'booking@homecarespa.ae', password: 'HCS154@bys' } : null}
       footer={
         <p>
           Own a spa?{' '}

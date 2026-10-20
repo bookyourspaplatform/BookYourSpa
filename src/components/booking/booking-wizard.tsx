@@ -97,8 +97,13 @@ export function BookingWizard({
   const [treatmentId, setTreatmentId] = useState<string | null>(preselectedTreatmentId);
   const [therapistFilter, setTherapistFilter] = useState<string>('any');
   const [availability, setAvailability] = useState<DayDto[] | null>(null);
-  const [slotsLoading, setSlotsLoading] = useState(false);
   const [availabilityError, setAvailabilityError] = useState<string | null>(null);
+  // Loading is DERIVED from the key of the request we're waiting on instead of
+  // being setState'd inside the fetch effect: the key changes during render the
+  // moment treatment/therapist changes, and settles when the response lands.
+  const [availLoadedKey, setAvailLoadedKey] = useState<string | null>(null);
+  const availKey = treatmentId ? `${treatmentId}|${therapistFilter}` : null;
+  const slotsLoading = availKey !== null && availLoadedKey !== availKey;
   const [date, setDate] = useState<string | null>(null);
   const [slot, setSlot] = useState<SlotDto | null>(null);
 
@@ -112,10 +117,13 @@ export function BookingWizard({
   const [couponInput, setCouponInput] = useState('');
   const [couponApplied, setCouponApplied] = useState<string | null>(null);
   const [quote, setQuote] = useState<QuoteDto | null>(null);
-  const [quoteLoading, setQuoteLoading] = useState(false);
   const [quoteError, setQuoteError] = useState<string | null>(null);
+  // Same derived-loading pattern as availability above.
+  const [quoteLoadedKey, setQuoteLoadedKey] = useState<string | null>(null);
+  const quoteKey = step >= 2 && treatmentId ? `${treatmentId}|${couponApplied ?? ''}` : null;
+  const quoteLoading = quoteKey !== null && quoteLoadedKey !== quoteKey;
 
-  const [gateway, setGateway] = useState<string | null>(null);
+  const [gatewayChoice, setGatewayChoice] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const reviewRef = useRef<HTMLDivElement>(null);
@@ -123,30 +131,38 @@ export function BookingWizard({
   const treatment = useMemo(() => treatments.find((t) => t.id === treatmentId) ?? null, [treatments, treatmentId]);
 
   /* --------------------------- availability -------------------------- */
+  // Tracks the most recently started request so a slow stale response can never
+  // overwrite a newer one (or strand the derived loading flag).
+  const availReqRef = useRef<string | null>(null);
+
   const loadAvailability = useCallback(
-    async (therapistId: string) => {
+    (therapistId: string) => {
       if (!treatmentId) return;
-      setSlotsLoading(true);
-      setAvailabilityError(null);
-      try {
-        const params = new URLSearchParams({ branchId: branch.id, treatmentId, days: '14' });
-        if (therapistId !== 'any') params.set('therapistId', therapistId);
-        const res = await fetch(`/api/availability?${params.toString()}`, { cache: 'no-store' });
-        const json = await res.json();
-        if (!res.ok) throw new Error(json.error ?? 'Could not load availability');
-        const days: DayDto[] = json.days;
-        setAvailability(days);
-        setDate((current) => {
-          if (current && days.some((d) => d.date === current && d.count > 0)) return current;
-          return days.find((d) => d.count > 0)?.date ?? days[0]?.date ?? null;
+      const key = `${treatmentId}|${therapistId}`;
+      availReqRef.current = key;
+      const params = new URLSearchParams({ branchId: branch.id, treatmentId, days: '14' });
+      if (therapistId !== 'any') params.set('therapistId', therapistId);
+      fetch(`/api/availability?${params.toString()}`, { cache: 'no-store' })
+        .then(async (res) => {
+          const json = await res.json();
+          if (!res.ok) throw new Error(json.error ?? 'Could not load availability');
+          if (availReqRef.current !== key) return; // superseded by a newer request
+          const days: DayDto[] = json.days;
+          setAvailability(days);
+          setDate((current) => {
+            if (current && days.some((d) => d.date === current && d.count > 0)) return current;
+            return days.find((d) => d.count > 0)?.date ?? days[0]?.date ?? null;
+          });
+          setSlot(null);
+          setAvailabilityError(null);
+          setAvailLoadedKey(key);
+        })
+        .catch((err: unknown) => {
+          if (availReqRef.current !== key) return;
+          setAvailabilityError(err instanceof Error ? err.message : 'Availability unavailable');
+          setAvailability(null);
+          setAvailLoadedKey(key);
         });
-        setSlot(null);
-      } catch (err) {
-        setAvailabilityError(err instanceof Error ? err.message : 'Availability unavailable');
-        setAvailability(null);
-      } finally {
-        setSlotsLoading(false);
-      }
     },
     [branch.id, treatmentId],
   );
@@ -158,26 +174,32 @@ export function BookingWizard({
   }, [treatmentId, therapistFilter, loadAvailability]);
 
   /* ------------------------------ quote ------------------------------ */
+  const quoteReqRef = useRef<string | null>(null);
+
   const loadQuote = useCallback(
-    async (coupon: string | null) => {
+    (coupon: string | null) => {
       if (!treatmentId) return;
-      setQuoteLoading(true);
-      setQuoteError(null);
-      try {
-        const res = await fetch('/api/quote', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ branchId: branch.id, treatmentId, couponCode: coupon }),
+      const key = `${treatmentId}|${coupon ?? ''}`;
+      quoteReqRef.current = key;
+      fetch('/api/quote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ branchId: branch.id, treatmentId, couponCode: coupon }),
+      })
+        .then(async (res) => {
+          const json = await res.json();
+          if (!res.ok) throw new Error(json.error ?? 'Could not price this booking');
+          if (quoteReqRef.current !== key) return; // superseded by a newer request
+          setQuote(json.quote);
+          setQuoteError(null);
+          setQuoteLoadedKey(key);
+        })
+        .catch((err: unknown) => {
+          if (quoteReqRef.current !== key) return;
+          setQuote(null);
+          setQuoteError(err instanceof Error ? err.message : 'Pricing failed');
+          setQuoteLoadedKey(key);
         });
-        const json = await res.json();
-        if (!res.ok) throw new Error(json.error ?? 'Could not price this booking');
-        setQuote(json.quote);
-      } catch (err) {
-        setQuote(null);
-        setQuoteError(err instanceof Error ? err.message : 'Pricing failed');
-      } finally {
-        setQuoteLoading(false);
-      }
     },
     [branch.id, treatmentId],
   );
@@ -186,13 +208,16 @@ export function BookingWizard({
     if (step >= 2 && treatmentId) void loadQuote(couponApplied);
   }, [step, treatmentId, couponApplied, loadQuote]);
 
-  useEffect(() => {
-    if (!gateway && quote) {
-      const onlineMethod = branch.paymentMethods.find((m) => m !== 'venue');
-      if (quote.payment.online && onlineMethod) setGateway(onlineMethod);
-      else if (quote.payment.venue) setGateway('venue');
-    }
-  }, [quote, gateway, branch.paymentMethods]);
+  // The effective payment method: an explicit user choice wins, otherwise it is
+  // derived from the quote — pure state derivation, no effect needed.
+  const gateway = useMemo(() => {
+    if (gatewayChoice) return gatewayChoice;
+    if (!quote) return null;
+    const onlineMethod = branch.paymentMethods.find((m) => m !== 'venue');
+    if (quote.payment.online && onlineMethod) return onlineMethod;
+    if (quote.payment.venue) return 'venue';
+    return null;
+  }, [gatewayChoice, quote, branch.paymentMethods]);
 
   /* ----------------------------- selection --------------------------- */
   const daySlots = useMemo(() => availability?.find((d) => d.date === date)?.slots ?? [], [availability, date]);
@@ -248,6 +273,7 @@ export function BookingWizard({
           toast.error('That slot was taken', 'Please choose another time.');
           setStep(1);
           setSlot(null);
+          setAvailLoadedKey(null); // same-key refetch: flag it as in-flight again
           void loadAvailability(therapistFilter);
           return;
         }
@@ -602,7 +628,7 @@ export function BookingWizard({
                         name="gateway"
                         className="size-4 accent-[#20524c]"
                         checked={gateway === m}
-                        onChange={() => setGateway(m)}
+                        onChange={() => setGatewayChoice(m)}
                       />
                       <span className="flex items-center gap-2 font-medium text-ink-800">
                         {m === 'venue' ? <MapPin className="size-4 text-brand-600" /> : <CreditCard className="size-4 text-brand-600" />}
@@ -622,7 +648,7 @@ export function BookingWizard({
                 </p>
               </div>
 
-              {quoteError && (
+              {quoteError && !quoteLoading && (
                 <div className="mt-4 flex items-start gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
                   <AlertCircle className="mt-0.5 size-4 shrink-0" />
                   <span>{quoteError}</span>

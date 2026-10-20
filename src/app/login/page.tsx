@@ -20,7 +20,7 @@ export default async function CustomerLoginPage({
       role="customer"
       title="Welcome back"
       subtitle="Sign in to manage your bookings, vouchers and details."
-      demo={process.env.NODE_ENV !== 'production' ? { email: 'customer@example.com', password: 'Customer1234!' } : null}
+      demo={process.env.NODE_ENV !== 'production' ? { email: 'appsdaeng@gmail.com', password: 'apps154@bys' } : null}
       footer={
         <p>
           New to BookYourSpa?{' '}
