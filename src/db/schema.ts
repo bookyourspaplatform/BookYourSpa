@@ -692,6 +692,75 @@ export const promotionsRelations = relations(promotions, ({ one }) => ({
   branch: one(branches, { fields: [promotions.branchId], references: [branches.id] }),
 }));
 
+/* ------------------------------------------------------------------ */
+/* Retail products sold at a branch                                    */
+/* ------------------------------------------------------------------ */
+
+export const products = pgTable(
+  'products',
+  {
+    id: text('id').primaryKey(), // prd_xxxxxxxx
+    providerId: text('provider_id')
+      .notNull()
+      .references(() => providers.id, { onDelete: 'cascade' }),
+    branchId: text('branch_id')
+      .notNull()
+      .references(() => branches.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    description: text('description'),
+    /** Retail price in branch-currency minor units. */
+    price: integer('price').notNull().default(0),
+    currency: text('currency').notNull().default('IDR'),
+    imageUrl: text('image_url'),
+    active: boolean('active').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [index('products_branch_idx').on(t.branchId), index('products_provider_idx').on(t.providerId)],
+);
+
+export const productsRelations = relations(products, ({ one }) => ({
+  provider: one(providers, { fields: [products.providerId], references: [providers.id] }),
+  branch: one(branches, { fields: [products.branchId], references: [branches.id] }),
+}));
+
+/* ------------------------------------------------------------------ */
+/* Customer reviews of a branch                                        */
+/* ------------------------------------------------------------------ */
+
+export const REVIEW_STATUSES = ['pending', 'published', 'hidden'] as const;
+export type ReviewStatus = (typeof REVIEW_STATUSES)[number];
+
+export const reviews = pgTable(
+  'reviews',
+  {
+    id: text('id').primaryKey(), // rev_xxxxxxxx
+    branchId: text('branch_id')
+      .notNull()
+      .references(() => branches.id, { onDelete: 'cascade' }),
+    bookingId: text('booking_id').references(() => bookings.id, { onDelete: 'set null' }),
+    guestName: text('guest_name').notNull(),
+    rating: integer('rating').notNull(), // 1..5
+    comment: text('comment'),
+    /** Providers publish/hide reviews; hidden ones never show publicly. */
+    status: text('status', { enum: REVIEW_STATUSES }).notNull().default('pending'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [index('reviews_branch_idx').on(t.branchId), index('reviews_status_idx').on(t.status)],
+);
+
+export const reviewsRelations = relations(reviews, ({ one }) => ({
+  branch: one(branches, { fields: [reviews.branchId], references: [branches.id] }),
+  booking: one(bookings, { fields: [reviews.bookingId], references: [bookings.id] }),
+}));
+
 export const pages = pgTable('pages', {
   id: text('id').primaryKey(),
   slug: text('slug').notNull().unique(),
@@ -779,6 +848,8 @@ export type Commission = typeof commissions.$inferSelect;
 export type Payout = typeof payouts.$inferSelect;
 export type Coupon = typeof coupons.$inferSelect;
 export type Promotion = typeof promotions.$inferSelect;
+export type Product = typeof products.$inferSelect;
+export type Review = typeof reviews.$inferSelect;
 export type Page = typeof pages.$inferSelect;
 export type AuditLog = typeof auditLogs.$inferSelect;
 export type EmailOutbox = typeof emailOutbox.$inferSelect;

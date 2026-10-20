@@ -8,11 +8,15 @@ import {
   bookings,
   branchTreatments,
   branches,
+  products,
+  promotions,
   providers,
+  reviews,
   scheduleExceptions,
   schedules,
   therapists,
   treatments,
+  PROMO_POSITIONS,
   TREATMENT_CATEGORIES,
   USER_STATUSES,
 } from '@/db/schema';
@@ -148,6 +152,31 @@ export async function saveBranch(input: z.infer<typeof branchSchema>): Promise<A
     return { ok: true, data: { id: created!.id } };
   } catch {
     return fail('Could not save the branch.');
+  }
+}
+
+export async function deleteBranch(branchId: string): Promise<ActionResult> {
+  try {
+    const { db, providerId, user } = await providerCtx();
+    await assertBranch(db, providerId, branchId);
+
+    const bookingRows = await db
+      .select({ id: bookings.id })
+      .from(bookings)
+      .where(eq(bookings.branchId, branchId))
+      .limit(1);
+    if (bookingRows.length > 0) {
+      return fail(
+        'This branch has bookings and cannot be deleted. Suspend it instead — customers keep access to their vouchers.',
+      );
+    }
+
+    await db.delete(branches).where(and(eq(branches.id, branchId), eq(branches.providerId, providerId)));
+    await logAudit({ actorId: user.id, actorRole: user.role, action: 'branch.deleted', entity: 'branch', entityId: branchId });
+    revalidateProvider(providerId, ['/provider/branches', '/provider/availability', '/provider/treatments', '/provider/therapists']);
+    return { ok: true };
+  } catch {
+    return fail('Could not delete the branch.');
   }
 }
 
@@ -497,6 +526,209 @@ export async function updateBookingStatus(
   } catch (err) {
     const message = err instanceof BookingError ? err.message : 'Could not update the booking.';
     return fail(message);
+  }
+}
+
+/* ------------------------------- products ---------------------------- */
+
+const productSchema = z.object({
+  id: z.string().optional(),
+  branchId: z.string().min(1),
+  name: z.string().min(2).max(120),
+  description: z.string().max(2000).optional().nullable(),
+  price: z.number().int().min(0).max(1_000_000_000),
+  imageUrl: z.string().max(400).optional().nullable(),
+  active: z.boolean().default(true),
+});
+
+export async function saveProduct(input: z.infer<typeof productSchema>): Promise<ActionResult<{ id: string }>> {
+  try {
+    const parsed = productSchema.safeParse(input);
+    if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? 'Invalid product data.');
+    const { db, providerId, user } = await providerCtx();
+    const branch = await assertBranch(db, providerId, parsed.data.branchId);
+    const payload = {
+      name: parsed.data.name,
+      description: parsed.data.description || null,
+      price: parsed.data.price,
+      currency: branch.currency,
+      imageUrl: parsed.data.imageUrl || null,
+      active: parsed.data.active,
+    };
+
+    if (parsed.data.id) {
+      const row = await db.query.products.findFirst({ where: eq(products.id, parsed.data.id) });
+      if (!row || row.providerId !== providerId) return fail('Product not found.');
+      await db.update(products).set({ ...payload, updatedAt: new Date() }).where(eq(products.id, parsed.data.id));
+      await logAudit({ actorId: user.id, actorRole: user.role, action: 'product.updated', entity: 'product', entityId: parsed.data.id });
+      revalidateProvider(providerId, [`/provider/branches/${parsed.data.branchId}`]);
+      return { ok: true, data: { id: parsed.data.id } };
+    }
+
+    const [created] = await db
+      .insert(products)
+      .values({ ...payload, id: newId('prd'), providerId, branchId: parsed.data.branchId })
+      .returning({ id: products.id });
+    await logAudit({ actorId: user.id, actorRole: user.role, action: 'product.created', entity: 'product', entityId: created!.id });
+    revalidateProvider(providerId, [`/provider/branches/${parsed.data.branchId}`]);
+    return { ok: true, data: { id: created!.id } };
+  } catch {
+    return fail('Could not save the product.');
+  }
+}
+
+export async function setProductActive(productId: string, active: boolean): Promise<ActionResult> {
+  try {
+    const { db, providerId, user } = await providerCtx();
+    const row = await db.query.products.findFirst({ where: eq(products.id, productId) });
+    if (!row || row.providerId !== providerId) return fail('Product not found.');
+    await db.update(products).set({ active, updatedAt: new Date() }).where(eq(products.id, productId));
+    await logAudit({ actorId: user.id, actorRole: user.role, action: 'product.status', entity: 'product', entityId: productId, meta: { active } });
+    revalidateProvider(providerId, [`/provider/branches/${row.branchId}`]);
+    return { ok: true };
+  } catch {
+    return fail('Could not update the product.');
+  }
+}
+
+export async function deleteProduct(productId: string): Promise<ActionResult> {
+  try {
+    const { db, providerId, user } = await providerCtx();
+    const row = await db.query.products.findFirst({ where: eq(products.id, productId) });
+    if (!row || row.providerId !== providerId) return fail('Product not found.');
+    await db.delete(products).where(eq(products.id, productId));
+    await logAudit({ actorId: user.id, actorRole: user.role, action: 'product.deleted', entity: 'product', entityId: productId });
+    revalidateProvider(providerId, [`/provider/branches/${row.branchId}`]);
+    return { ok: true };
+  } catch {
+    return fail('Could not delete the product.');
+  }
+}
+
+/* ------------------------ provider promotions ----------------------- */
+
+const branchPromoSchema = z.object({
+  id: z.string().optional(),
+  branchId: z.string().min(1),
+  title: z.string().min(2).max(160),
+  summary: z.string().max(400).optional().nullable(),
+  position: z.enum(PROMO_POSITIONS),
+  startsAt: z.string().optional().nullable(),
+  endsAt: z.string().optional().nullable(),
+  active: z.boolean().default(true),
+});
+
+async function assertPromotion(db: AppDb, providerId: string, promotionId: string) {
+  const row = await db.query.promotions.findFirst({ where: eq(promotions.id, promotionId) });
+  const owned =
+    row &&
+    (row.providerId === providerId ||
+      (row.branchId ? (await db.query.branches.findFirst({ where: eq(branches.id, row.branchId) }))?.providerId === providerId : false));
+  if (!row || !owned) throw new Error('Promotion not found.');
+  return row;
+}
+
+export async function saveBranchPromotion(input: z.infer<typeof branchPromoSchema>): Promise<ActionResult<{ id: string }>> {
+  try {
+    const parsed = branchPromoSchema.safeParse(input);
+    if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? 'Invalid promotion.');
+    const { db, providerId, user } = await providerCtx();
+    await assertBranch(db, providerId, parsed.data.branchId);
+    const data = parsed.data;
+    const payload = {
+      title: data.title,
+      summary: data.summary || null,
+      position: data.position,
+      startsAt: data.startsAt ? new Date(`${data.startsAt}T00:00:00Z`) : null,
+      endsAt: data.endsAt ? new Date(`${data.endsAt}T23:59:59Z`) : null,
+      active: data.active,
+    };
+
+    if (data.id) {
+      await assertPromotion(db, providerId, data.id);
+      await db.update(promotions).set(payload).where(eq(promotions.id, data.id));
+      await logAudit({ actorId: user.id, actorRole: user.role, action: 'promo.updated', entity: 'promotion', entityId: data.id });
+      revalidateProvider(providerId, [`/provider/branches/${data.branchId}`]);
+      revalidatePath('/deals');
+      return { ok: true, data: { id: data.id } };
+    }
+
+    let slug = slugify(data.title) || 'promo';
+    const dupe = await db.query.promotions.findFirst({ where: eq(promotions.slug, slug) });
+    if (dupe) slug = `${slug}-${Date.now().toString(36).slice(-4)}`;
+    const [created] = await db
+      .insert(promotions)
+      .values({ ...payload, id: newId('prm'), slug, providerId, branchId: data.branchId })
+      .returning({ id: promotions.id });
+    await logAudit({ actorId: user.id, actorRole: user.role, action: 'promo.created', entity: 'promotion', entityId: created!.id });
+    revalidateProvider(providerId, [`/provider/branches/${data.branchId}`]);
+    revalidatePath('/deals');
+    return { ok: true, data: { id: created!.id } };
+  } catch {
+    return fail('Could not save the promotion.');
+  }
+}
+
+export async function setPromotionActive(promotionId: string, active: boolean): Promise<ActionResult> {
+  try {
+    const { db, providerId, user } = await providerCtx();
+    const row = await assertPromotion(db, providerId, promotionId);
+    await db.update(promotions).set({ active }).where(eq(promotions.id, promotionId));
+    await logAudit({ actorId: user.id, actorRole: user.role, action: 'promo.status', entity: 'promotion', entityId: promotionId, meta: { active } });
+    revalidateProvider(providerId, row.branchId ? [`/provider/branches/${row.branchId}`] : []);
+    revalidatePath('/deals');
+    return { ok: true };
+  } catch {
+    return fail('Could not update the promotion.');
+  }
+}
+
+export async function deletePromotion(promotionId: string): Promise<ActionResult> {
+  try {
+    const { db, providerId, user } = await providerCtx();
+    const row = await assertPromotion(db, providerId, promotionId);
+    await db.delete(promotions).where(eq(promotions.id, promotionId));
+    await logAudit({ actorId: user.id, actorRole: user.role, action: 'promo.deleted', entity: 'promotion', entityId: promotionId });
+    revalidateProvider(providerId, row.branchId ? [`/provider/branches/${row.branchId}`] : []);
+    revalidatePath('/deals');
+    return { ok: true };
+  } catch {
+    return fail('Could not delete the promotion.');
+  }
+}
+
+/* ------------------------------ reviews ----------------------------- */
+
+async function assertReview(db: AppDb, providerId: string, reviewId: string) {
+  const row = await db.query.reviews.findFirst({ where: eq(reviews.id, reviewId) });
+  if (!row) throw new Error('Review not found.');
+  await assertBranch(db, providerId, row.branchId);
+  return row;
+}
+
+export async function setReviewStatus(reviewId: string, status: 'published' | 'hidden'): Promise<ActionResult> {
+  try {
+    const { db, providerId, user } = await providerCtx();
+    await assertReview(db, providerId, reviewId);
+    await db.update(reviews).set({ status, updatedAt: new Date() }).where(eq(reviews.id, reviewId));
+    await logAudit({ actorId: user.id, actorRole: user.role, action: 'review.status', entity: 'review', entityId: reviewId, meta: { status } });
+    revalidateProvider(providerId, ['/provider/branches']);
+    return { ok: true };
+  } catch {
+    return fail('Could not update the review.');
+  }
+}
+
+export async function deleteReview(reviewId: string): Promise<ActionResult> {
+  try {
+    const { db, providerId, user } = await providerCtx();
+    const row = await assertReview(db, providerId, reviewId);
+    await db.delete(reviews).where(eq(reviews.id, reviewId));
+    await logAudit({ actorId: user.id, actorRole: user.role, action: 'review.deleted', entity: 'review', entityId: reviewId });
+    revalidateProvider(providerId, [`/provider/branches/${row.branchId}`]);
+    return { ok: true };
+  } catch {
+    return fail('Could not delete the review.');
   }
 }
 

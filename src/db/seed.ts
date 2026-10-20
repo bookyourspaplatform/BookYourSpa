@@ -63,6 +63,8 @@ export async function runSeed(opts: { force?: boolean } = {}): Promise<void> {
       T.agents,
       T.coupons,
       T.promotions,
+      T.products,
+      T.reviews,
       T.branchTreatments,
       T.scheduleExceptions,
       T.schedules,
@@ -767,6 +769,106 @@ export async function runSeed(opts: { force?: boolean } = {}): Promise<void> {
       position: 'deal',
       active: true,
       sortOrder: 2,
+    },
+  ]);
+
+  /* ------------------------- retail products ------------------------- */
+
+  await db.insert(T.products).values([
+    {
+      id: newId('prd'),
+      providerId: aranjayaId,
+      branchId: seminyakId,
+      name: 'Boreh spice body scrub (take-home jar)',
+      description: '250g jar of our signature warming boreh blend — the same paste used in the treatment room.',
+      price: 185000,
+      currency: 'IDR',
+      active: true,
+    },
+    {
+      id: newId('prd'),
+      providerId: aranjayaId,
+      branchId: seminyakId,
+      name: 'Frangipani body oil',
+      description: 'Cold-pressed coconut and frangipani oil, 100ml.',
+      price: 120000,
+      currency: 'IDR',
+      active: true,
+    },
+    {
+      id: newId('prd'),
+      providerId: aranjayaId,
+      branchId: ubudId,
+      name: 'Jamu wellness tea blend',
+      description: 'Turmeric, ginger and lemongrass — 20 sachets.',
+      price: 95000,
+      currency: 'IDR',
+      active: true,
+    },
+    {
+      id: newId('prd'),
+      providerId: serenityId,
+      branchId: marinaId,
+      name: 'Moroccan black soap + kessa glove set',
+      description: 'Authentic beldi soap (200g) with a traditional exfoliating kessa glove.',
+      price: 85,
+      currency: 'AED',
+      active: true,
+    },
+    {
+      id: newId('prd'),
+      providerId: serenityId,
+      branchId: marinaId,
+      name: 'Rhassoul clay ritual kit',
+      description: '300g ghassoul clay, rose water and application brush — the hammam take-home ritual.',
+      price: 140,
+      currency: 'AED',
+      active: false,
+    },
+  ]);
+
+  /* --------------------------- reviews ------------------------------- */
+
+  await db.insert(T.reviews).values([
+    {
+      id: newId('rev'),
+      branchId: seminyakId,
+      guestName: 'Emma R.',
+      rating: 5,
+      comment: 'The boreh scrub was incredible — booking was confirmed instantly and the team remembered my preferences.',
+      status: 'published',
+    },
+    {
+      id: newId('rev'),
+      branchId: seminyakId,
+      guestName: 'Daniel K.',
+      rating: 4,
+      comment: 'Lovely deep tissue massage. Started ten minutes late but the therapist made up for it.',
+      status: 'published',
+    },
+    {
+      id: newId('rev'),
+      branchId: marinaId,
+      guestName: 'Fatima A.',
+      rating: 5,
+      comment: 'The hammam ceremony is the real thing. Snow room afterwards was a surprise bonus.',
+      status: 'published',
+    },
+    {
+      id: newId('rev'),
+      branchId: marinaId,
+      guestName: 'James W.',
+      rating: 3,
+      comment: 'Good treatment but hard to find parking on a weekend evening.',
+      status: 'pending',
+    },
+    {
+      id: newId('rev'),
+      branchId: ubudId,
+      guestName: 'Sofia M.',
+      rating: 5,
+      comment: 'Most peaceful hour of our honeymoon. The riverside sala is pure magic.',
+      status: 'published',
     },
   ]);
 

@@ -42,9 +42,8 @@ export function DashShell({
       <header className="no-print sticky top-0 z-40 border-b border-ink-100 bg-white/90 backdrop-blur-md">
         <div className="mx-auto flex h-14 max-w-7xl items-center justify-between gap-3 px-4 sm:px-6">
           <div className="flex items-center gap-3">
-            <Link href="/" aria-label="Back to site" className="flex items-center gap-2">
-              <Logo className="h-7 w-auto" />
-            </Link>
+            {/* Logo renders its own <Link href="/"> — do not wrap it in another link (invalid nested <a>). */}
+            <Logo className="h-7 w-auto" />
             <span className="hidden rounded-full bg-brand-50 px-2.5 py-0.5 text-[11.5px] font-semibold uppercase tracking-wide text-brand-700 sm:inline">
               {title}
             </span>

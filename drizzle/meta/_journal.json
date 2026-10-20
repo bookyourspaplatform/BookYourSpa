@@ -8,6 +8,13 @@
       "when": 1792347737401,
       "tag": "0000_careful_power_pack",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792480026941,
+      "tag": "0001_cloudy_grandmaster",
+      "breakpoints": true
     }
   ]
 }
