@@ -280,7 +280,8 @@ export const branches = pgTable(
     showTherapistOnline: boolean('show_therapist_online').notNull().default(false),
     /** Commission (basis points) paid to agents/resellers/affiliates for this branch — null = the partner's own default rate. */
     agentFeeBps: integer('agent_fee_bps'),
-    facilities: text('facilities', { enum: SPA_FACILITIES })
+    /** Preset amenity keys plus free-text entries the owner adds manually. */
+    facilities: text('facilities')
       .array()
       .notNull()
       .default(sql`'{}'::text[]`),

@@ -18,7 +18,6 @@ import {
   treatments,
   PROMO_POSITIONS,
   SPA_CATEGORIES,
-  SPA_FACILITIES,
   SPA_TYPES,
   TREATMENT_GENRES,
   TREATMENT_DELIVERY_TYPES,
@@ -128,7 +127,20 @@ const branchSchema = z.object({
   showTherapistOnline: z.boolean().default(false),
   /** Agent/reseller/affiliate fee in basis points (1500 = 15%); null = partner default. */
   agentFeeBps: z.number().int().min(0).max(10000).optional().nullable(),
-  facilities: z.array(z.enum(SPA_FACILITIES)).max(20).default([]),
+  /** Preset amenity keys plus anything the owner types in themselves. */
+  facilities: z
+    .array(z.string().trim().min(2).max(48))
+    .max(30)
+    .default([])
+    .transform((list) => {
+      const seen = new Set<string>();
+      return list.filter((facility) => {
+        const key = facility.toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    }),
   images: z
     .array(z.string().max(4_000_000))
     .max(10)

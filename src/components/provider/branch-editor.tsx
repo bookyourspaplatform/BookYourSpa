@@ -10,6 +10,7 @@ import {
   Link2,
   Loader2,
   MapPin,
+  Plus,
   Trash2,
   Upload,
 } from 'lucide-react';
@@ -218,6 +219,9 @@ function ChipToggle({
   );
 }
 
+/** Matches the server-side cap so the form can warn before a failed save. */
+const MAX_BRANCH_FACILITIES = 30;
+
 /**
  * Create/edit dialog for a single spa business (branch). Pass `branch` to edit,
  * or `null` to create. Owns its own save flow and closes itself.
@@ -235,6 +239,7 @@ export function BranchEditor({
   const [importing, startImport] = useTransition();
   const [imageUrl, setImageUrl] = useState('');
   const [imageError, setImageError] = useState('');
+  const [facilityDraft, setFacilityDraft] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
   const toast = useToast();
@@ -248,6 +253,29 @@ export function BranchEditor({
       const list = (d[key] as string[]) ?? [];
       return { ...d, [key]: list.includes(value) ? list.filter((v) => v !== value) : [...list, value] };
     });
+  }
+
+  /** Tick-marked standard amenities plus anything the owner typed in. */
+  const presetFacilities: readonly string[] = SPA_FACILITIES;
+  const customFacilities = draft.facilities.filter((f) => !presetFacilities.includes(f));
+
+  function addFacility() {
+    const value = facilityDraft.trim().replace(/\s+/g, ' ');
+    if (value.length < 2) {
+      toast.error('Name is too short', 'Use at least 2 characters.');
+      return;
+    }
+    if (draft.facilities.length >= MAX_BRANCH_FACILITIES) {
+      toast.error('List is full', `Up to ${MAX_BRANCH_FACILITIES} amenities per spa.`);
+      return;
+    }
+    if (draft.facilities.some((f) => f.toLowerCase() === value.toLowerCase())) {
+      toast.error('Already on the list', value);
+      setFacilityDraft('');
+      return;
+    }
+    setDraft((d) => ({ ...d, facilities: [...d.facilities, value] }));
+    setFacilityDraft('');
   }
 
   /* --------------------------- Google Maps import -------------------------- */
@@ -319,7 +347,7 @@ export function BranchEditor({
           draft.agentFeePercent.trim() === '' || !Number.isFinite(Number(draft.agentFeePercent))
             ? null
             : Math.min(100, Math.max(0, Math.round(Number(draft.agentFeePercent) * 100))),
-        facilities: draft.facilities as (typeof SPA_FACILITIES)[number][],
+        facilities: draft.facilities,
         description: draft.description?.trim() || null,
         images: draft.images.filter(isRenderableImage).slice(0, MAX_BRANCH_IMAGES),
         hours: draft.hours,
@@ -708,13 +736,53 @@ export function BranchEditor({
         </div>
       </div>
 
-      <Section title="Spa facilities" hint="Amenities guests can expect on site.">
+      <Section
+        title="Spa facilities"
+        hint="Amenities guests can expect on site — tick the standard list, then add anything else this spa offers."
+      >
         <ChipToggle
           values={draft.facilities}
           options={SPA_FACILITIES}
           labels={SPA_FACILITY_LABELS}
           onToggle={(v) => toggleInList('facilities', v)}
         />
+        {customFacilities.length > 0 && (
+          <div className="mt-3">
+            <p className="mb-1.5 text-[12px] text-ink-400">ADDED BY YOU</p>
+            <ChipToggle
+              values={draft.facilities}
+              options={customFacilities}
+              labels={{}}
+              onToggle={(v) => toggleInList('facilities', v)}
+            />
+          </div>
+        )}
+        <form
+          className="mt-3 flex flex-wrap items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            addFacility();
+          }}
+        >
+          <input
+            value={facilityDraft}
+            onChange={(e) => setFacilityDraft(e.target.value)}
+            maxLength={48}
+            placeholder="e.g. Heated marble loungers"
+            aria-label="Add another facility"
+            className="h-10 w-64 rounded-xl border border-ink-200 bg-white px-3.5 text-sm outline-none transition placeholder:text-ink-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-500/15"
+          />
+          <Button
+            type="submit"
+            size="sm"
+            disabled={!facilityDraft.trim() || draft.facilities.length >= MAX_BRANCH_FACILITIES}
+          >
+            <Plus className="size-3.5" /> Add facility
+          </Button>
+        </form>
+        <p className="mt-1.5 text-[12.5px] text-ink-500">
+          Anything not in the list above — it shows on your spa page just like the standard amenities.
+        </p>
       </Section>
 
       {/* -------------------------------- Images ------------------------------ */}
