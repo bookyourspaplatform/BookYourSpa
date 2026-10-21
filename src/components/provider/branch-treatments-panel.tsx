@@ -6,7 +6,8 @@ import { Check, Plus, X } from 'lucide-react';
 import { setBranchPrice, setBranchTreatmentActive } from '@/lib/actions/provider';
 import { Modal } from '@/components/ui/modal';
 import { Button, buttonClasses } from '@/components/ui/button';
-import { Field, Input, inputCls } from '@/components/ui/field';
+import { Field, inputCls } from '@/components/ui/field';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
@@ -128,11 +129,10 @@ export function BranchTreatmentsPanel({
                 <div className="flex items-center gap-2">
                   <div className="flex items-center gap-1.5">
                     <span className="text-[13px] text-ink-400">{currency}</span>
-                    <input
-                      type="number"
-                      min={0}
+                    <MoneyInput
                       value={value(r)}
-                      onChange={(e) => setDrafts((d) => ({ ...d, [r.id]: Number(e.target.value) }))}
+                      currency={currency}
+                      onValueChange={(minor) => setDrafts((d) => ({ ...d, [r.id]: minor }))}
                       onKeyDown={(e) => e.key === 'Enter' && savePrice(r)}
                       disabled={pending}
                       aria-label={`Price for ${r.name}`}
@@ -190,7 +190,7 @@ export function BranchTreatmentsPanel({
             </Field>
             <Field label={`Price (${currency})`} className="mt-4">
               {({ id }) => (
-                <Input id={id} type="number" min={0} value={pickPrice} onChange={(e) => setPickPrice(Number(e.target.value))} />
+                <MoneyInput id={id} value={pickPrice} currency={currency} onValueChange={setPickPrice} />
               )}
             </Field>
             <div className="mt-6 flex justify-end gap-3">

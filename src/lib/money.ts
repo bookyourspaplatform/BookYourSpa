@@ -67,21 +67,33 @@ export function formatMoney(minor: number, currency: string, locale = 'en-US'): 
   }
 }
 
-/** Parse user input ("350.000", "350,000", "80.5") into minor units. */
+/** Form-field text without a currency symbol: 42000 AED -> "420.00", 350000 IDR -> "350,000". */
+export function formatAmountInput(minor: number, currency: string, locale = 'en-US'): string {
+  const exp = exponentOf(currency);
+  const value = Number.isFinite(minor) ? Math.round(minor) : 0;
+  const major = value / 10 ** exp;
+  return new Intl.NumberFormat(locale, {
+    minimumFractionDigits: exp > 0 && value % 10 ** exp !== 0 ? exp : exp === 0 ? 0 : 2,
+    maximumFractionDigits: exp,
+  }).format(major);
+}
+
+/** Parse user input ("350.000", "350,000", "1,250.00", "80.5") into minor units. */
 export function parseMoneyToMinor(input: string | number, currency: string): number {
   if (typeof input === 'number') return Math.round(input);
   const cleaned = input.replace(/[^\d.,-]/g, '').trim();
   if (!cleaned) return 0;
-  // Last separator is the decimal marker when it leaves <= 2 decimals.
+  // Last separator is the decimal marker when it leaves <= 2 decimals; any
+  // separators left of it are grouping ("1,250.00") and must be dropped.
   const lastDot = cleaned.lastIndexOf('.');
   const lastComma = cleaned.lastIndexOf(',');
   const lastSep = Math.max(lastDot, lastComma);
   let major = cleaned;
   if (lastSep > -1) {
     const decimals = cleaned.length - lastSep - 1;
-    const hasDecimalPoint = decimals <= 2 && decimals > 0 && (lastDot >= lastComma || lastComma > -1);
+    const hasDecimalPoint = decimals <= 2 && decimals > 0;
     major = hasDecimalPoint
-      ? cleaned.slice(0, lastSep) + '.' + cleaned.slice(lastSep + 1)
+      ? cleaned.slice(0, lastSep).replace(/[.,]/g, '') + '.' + cleaned.slice(lastSep + 1)
       : cleaned.replace(/[.,]/g, '');
   }
   const value = Number(major);

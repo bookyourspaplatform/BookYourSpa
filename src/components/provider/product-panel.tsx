@@ -7,6 +7,7 @@ import { deleteProduct, saveProduct, setProductActive } from '@/lib/actions/prov
 import { Modal } from '@/components/ui/modal';
 import { Button, buttonClasses } from '@/components/ui/button';
 import { Field, Input, Textarea } from '@/components/ui/field';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/components/ui/toast';
 
@@ -23,7 +24,7 @@ type Draft = { id?: string; name: string; description: string; price: number };
 
 const EMPTY_DRAFT: Draft = { name: '', description: '', price: 0 };
 
-export function ProductPanel({ branchId, rows }: { branchId: string; rows: ProductRow[] }) {
+export function ProductPanel({ branchId, currency, rows }: { branchId: string; currency: string; rows: ProductRow[] }) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [pending, startTransition] = useTransition();
   const router = useRouter();
@@ -156,7 +157,7 @@ export function ProductPanel({ branchId, rows }: { branchId: string; rows: Produ
             </Field>
             <Field label="Price" className="mt-4">
               {({ id }) => (
-                <Input id={id} type="number" min={0} value={draft.price} onChange={(e) => setDraft({ ...draft, price: Number(e.target.value) })} />
+                <MoneyInput id={id} value={draft.price} currency={currency} onValueChange={(minor) => setDraft({ ...draft, price: minor })} />
               )}
             </Field>
             <div className="mt-6 flex justify-end gap-3">

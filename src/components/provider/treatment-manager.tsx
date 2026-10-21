@@ -9,6 +9,7 @@ import { SPA_TYPE_LABELS, GENRE_LABELS, DELIVERY_TYPE_LABELS } from '@/lib/catal
 import { Modal } from '@/components/ui/modal';
 import { Button, buttonClasses } from '@/components/ui/button';
 import { Field, Input, Select } from '@/components/ui/field';
+import { MoneyInput } from '@/components/ui/money-input';
 import { RichText } from '@/components/ui/rich-text';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/components/ui/toast';
@@ -279,13 +280,11 @@ export function TreatmentManager({ treatments, currency }: { treatments: Treatme
                   </label>
                   <label className="flex min-w-0 flex-1 flex-col gap-1">
                     <span className="text-[12px] text-ink-500">Price ({currency})</span>
-                    <Input
-                      type="number"
-                      min={0}
+                    <MoneyInput
                       value={o.price}
-                      onChange={(e) => setOption(i, { price: Number(e.target.value) })}
+                      currency={currency}
+                      onValueChange={(minor) => setOption(i, { price: minor })}
                       aria-label={`Option ${i + 1} price`}
-                      className="h-10"
                     />
                   </label>
                   <label className="flex min-w-0 flex-1 flex-col gap-1">

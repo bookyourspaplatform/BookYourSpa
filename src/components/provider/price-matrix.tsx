@@ -6,6 +6,7 @@ import { Check, Layers } from 'lucide-react';
 import { setBranchPrice, setBranchTreatmentActive } from '@/lib/actions/provider';
 import { buttonClasses } from '@/components/ui/button';
 import { inputCls } from '@/components/ui/field';
+import { MoneyInput } from '@/components/ui/money-input';
 import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 
@@ -128,14 +129,12 @@ export function PriceMatrix({
               </div>
               <div className="flex items-center gap-2">
                 <div className="relative">
-                  <input
-                    type="number"
-                    min={0}
-                    step={1000}
+                  <MoneyInput
                     aria-label={`Price for ${t.name}`}
                     disabled={!cell?.active && drafts[`${branchId}:${t.id}`] === undefined}
                     value={value(t.id)}
-                    onChange={(e) => setDrafts((d) => ({ ...d, [`${branchId}:${t.id}`]: Number(e.target.value) }))}
+                    currency={currency}
+                    onValueChange={(minor) => setDrafts((d) => ({ ...d, [`${branchId}:${t.id}`]: minor }))}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && cell?.active) save(t.id);
                     }}

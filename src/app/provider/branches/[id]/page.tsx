@@ -145,7 +145,7 @@ export default async function BranchDetailPage({
 
       {tab === 'treatments' && <BranchTreatmentsTab branchId={branch.id} currency={branch.currency} providerId={providerId} />}
 
-      {tab === 'products' && <BranchProductsTab branchId={branch.id} />}
+      {tab === 'products' && <BranchProductsTab branchId={branch.id} currency={branch.currency} />}
 
       {tab === 'staff' && <BranchStaffTab branchId={branch.id} providerId={providerId} branchName={branch.name} />}
 
@@ -272,7 +272,7 @@ async function BranchTreatmentsTab({ branchId, currency, providerId }: { branchI
 
 /* ------------------------------ products tab ------------------------------ */
 
-async function BranchProductsTab({ branchId }: { branchId: string }) {
+async function BranchProductsTab({ branchId, currency }: { branchId: string; currency: string }) {
   const db = await getDb();
   const productRows = await db.query.products.findMany({
     where: eq(products.branchId, branchId),
@@ -286,7 +286,7 @@ async function BranchProductsTab({ branchId }: { branchId: string }) {
     currency: p.currency,
     active: p.active,
   }));
-  return <ProductPanel branchId={branchId} rows={rows} />;
+  return <ProductPanel branchId={branchId} currency={currency} rows={rows} />;
 }
 
 /* -------------------------------- staff tab -------------------------------- */
