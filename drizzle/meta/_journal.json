@@ -36,6 +36,13 @@
       "when": 1792518550779,
       "tag": "0004_colossal_william_stryker",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792556848369,
+      "tag": "0005_rare_killraven",
+      "breakpoints": true
     }
   ]
 }

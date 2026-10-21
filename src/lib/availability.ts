@@ -346,7 +346,7 @@ export async function getAvailability(
 
   const [therapistRows, exceptionRows, bookedRows] = await Promise.all([
     db.query.therapists.findMany({
-      where: eq(therapists.branchId, branch.id),
+      where: and(eq(therapists.branchId, branch.id), eq(therapists.role, 'therapist')),
       columns: { id: true, name: true, active: true },
     }),
     db.query.scheduleExceptions.findMany({

@@ -8,6 +8,8 @@ import {
   bookings,
   branchTreatments,
   branches,
+  commissions,
+  payments,
   products,
   promotions,
   providers,
@@ -19,6 +21,8 @@ import {
   PROMO_POSITIONS,
   SPA_CATEGORIES,
   SPA_TYPES,
+  STAFF_ROLES,
+  STAFF_PAY_TYPES,
   TREATMENT_GENRES,
   TREATMENT_DELIVERY_TYPES,
   USER_STATUSES,
@@ -27,7 +31,9 @@ import { sanitizeRichText } from '@/lib/security';
 import { requireUser } from '@/lib/auth/session';
 import { cancelBooking, BookingError } from '@/lib/booking';
 import { logAudit } from '@/lib/audit';
-import { newId, slugify, isValidTime, hhmm, minutesOf } from '@/lib/utils';
+import { getSettings } from '@/lib/settings';
+import { priceBooking } from '@/lib/pricing';
+import { newId, newVoucherCode, slugify, isValidTime, hhmm, minutesOf } from '@/lib/utils';
 
 export type ActionResult<T = unknown> =
   | { ok: true; data?: T }
@@ -636,6 +642,20 @@ const therapistSchema = z.object({
   name: z.string().min(2).max(120),
   bio: z.string().max(2000).optional().nullable(),
   specialties: z.array(z.string().max(60)).max(12).default([]),
+  /** Device upload (data URL) or a link; never anything executable. */
+  avatarUrl: z
+    .string()
+    .max(2_500_000)
+    .optional()
+    .nullable()
+    .refine((v) => !v || v.startsWith('data:image/') || /^https?:\/\//.test(v), 'Photo must be an image upload or a link.')
+    .transform((v) => v?.trim() || null),
+  role: z.enum(STAFF_ROLES).default('therapist'),
+  /** fixed = manual amount, percent = share of every job (basis points). */
+  salaryType: z.enum(STAFF_PAY_TYPES).default('fixed'),
+  salaryValue: z.number().int().min(0).max(1_000_000_000).default(0),
+  incentiveType: z.enum(STAFF_PAY_TYPES).default('fixed'),
+  incentiveValue: z.number().int().min(0).max(1_000_000_000).default(0),
   active: z.boolean().default(true),
 });
 
@@ -681,6 +701,182 @@ export async function setTherapistActive(therapistId: string, active: boolean): 
     return { ok: true };
   } catch {
     return fail('Could not update the therapist.');
+  }
+}
+
+/* -------------------------------- POS ---------------------------------- */
+
+const posSaleSchema = z.object({
+  branchId: z.string().min(1),
+  treatmentId: z.string().min(1),
+  therapistId: z.string().optional().nullable(),
+  guestName: z.string().trim().min(1).max(120),
+  guestPhone: z.string().trim().max(40).optional().nullable(),
+  /** Walk-in override — falls back to the branch price when omitted or 0. */
+  amount: z.number().int().min(0).max(1_000_000_000).optional(),
+  paymentMethod: z.enum(['cash', 'card', 'other']).default('cash'),
+  notes: z.string().max(400).optional().nullable(),
+});
+
+export type PosSaleResult = {
+  id: string;
+  code: string;
+  treatmentName: string;
+  staffName: string | null;
+  total: number;
+  platformFee: number;
+  providerEarning: number;
+  staffShare: number;
+  currency: string;
+  paymentMethod: string;
+};
+
+/** Walk-in sale taken at the front desk — always captured as paid. */
+export async function createPosSale(input: z.infer<typeof posSaleSchema>): Promise<ActionResult<PosSaleResult>> {
+  try {
+    const parsed = posSaleSchema.safeParse(input);
+    if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? 'Invalid sale.');
+    const { db, providerId, user } = await providerCtx();
+    const data = parsed.data;
+
+    const branch = await assertBranch(db, providerId, data.branchId);
+    const treatment = await assertTreatment(db, providerId, data.treatmentId);
+    if (treatment.status !== 'active') return fail('That treatment is not published.');
+
+    const link = await db.query.branchTreatments.findFirst({
+      where: and(eq(branchTreatments.branchId, branch.id), eq(branchTreatments.treatmentId, treatment.id)),
+    });
+    if (!link || !link.active) return fail('That treatment is not offered at this branch.');
+
+    let staff: (typeof therapists.$inferSelect) | null = null;
+    if (data.therapistId) {
+      staff = await assertTherapist(db, providerId, data.therapistId);
+      if (staff.branchId !== branch.id) return fail('That staff member works at another branch.');
+      if (!staff.active) return fail('That staff member is inactive.');
+    }
+
+    const settings = await getSettings();
+    const posBps = settings['finance.posCommissionBps'];
+    const listPrice = data.amount && data.amount > 0 ? data.amount : link.price;
+    const pricing = priceBooking({
+      listPrice,
+      coupon: null,
+      platformBps: posBps,
+      agent: null,
+    });
+
+    const now = new Date();
+    const endAt = new Date(now.getTime() + treatment.durationMin * 60_000);
+
+    /* Staff paid by percentage earns a share of this job (salary + job fee). */
+    let staffShare = 0;
+    if (staff) {
+      const bps =
+        (staff.salaryType === 'percent' ? staff.salaryValue : 0) +
+        (staff.incentiveType === 'percent' ? staff.incentiveValue : 0);
+      if (bps > 0) staffShare = Math.round((pricing.total * Math.min(bps, 10_000)) / 10_000);
+    }
+
+    const bookingRow = await db.transaction(async (tx) => {
+      const rows = await tx
+        .insert(bookings)
+        .values({
+          id: newId('bkg'),
+          code: newVoucherCode(),
+          providerId,
+          branchId: branch.id,
+          treatmentId: treatment.id,
+          therapistId: staff?.id ?? null,
+          guestName: data.guestName,
+          guestEmail: '',
+          guestPhone: data.guestPhone || null,
+          startAt: now,
+          endAt,
+          timezone: branch.timezone,
+          status: 'confirmed',
+          paymentStatus: 'paid',
+          channel: 'pos',
+          currency: branch.currency,
+          listPrice: pricing.listPrice,
+          discountAmount: pricing.discountAmount,
+          totalAmount: pricing.total,
+          platformFee: pricing.platformFee,
+          agentCommission: 0,
+          providerEarning: pricing.providerEarning,
+          expiresAt: null,
+          paidAt: now,
+          notes: [data.notes?.trim() || null, `POS · ${data.paymentMethod}`].filter(Boolean).join(' — '),
+        })
+        .returning();
+      const row = rows[0]!;
+
+      const ledger: (typeof commissions.$inferInsert)[] = [];
+      if (row.platformFee > 0) {
+        ledger.push({
+          id: newId('com'),
+          bookingId: row.id,
+          party: 'platform',
+          providerId,
+          rateBps: posBps,
+          amount: row.platformFee,
+          currency: row.currency,
+        });
+      }
+      if (row.providerEarning > 0) {
+        ledger.push({
+          id: newId('com'),
+          bookingId: row.id,
+          party: 'provider',
+          providerId,
+          amount: row.providerEarning,
+          currency: row.currency,
+        });
+      }
+      if (ledger.length) await tx.insert(commissions).values(ledger);
+
+      await tx.insert(payments).values({
+        id: newId('pay'),
+        bookingId: row.id,
+        gateway: 'venue',
+        status: 'succeeded',
+        amount: row.totalAmount,
+        currency: row.currency,
+        gatewayData: { source: 'pos', method: data.paymentMethod },
+        paidAt: now,
+      });
+
+      return row;
+    });
+
+    await logAudit({
+      actorId: user.id,
+      actorRole: user.role,
+      action: 'pos.sale',
+      entity: 'booking',
+      entityId: bookingRow.id,
+      meta: { total: bookingRow.totalAmount, method: data.paymentMethod },
+    });
+    revalidateProvider(providerId, ['/provider/pos', '/provider/bookings', '/provider/calendar', '/provider/earnings']);
+
+    return {
+      ok: true,
+      data: {
+        id: bookingRow.id,
+        code: bookingRow.code,
+        treatmentName: treatment.name,
+        staffName: staff?.name ?? null,
+        total: bookingRow.totalAmount,
+        platformFee: bookingRow.platformFee,
+        providerEarning: bookingRow.providerEarning,
+        staffShare,
+        currency: bookingRow.currency,
+        paymentMethod: data.paymentMethod,
+      },
+    };
+  } catch (err) {
+    if ((err as { code?: string })?.code === '23505')
+      return fail('That staff member already has an appointment starting right now.');
+    return fail('Could not complete the sale.');
   }
 }
 

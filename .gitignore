@@ -42,6 +42,10 @@ next-env.d.ts
 
 # local embedded database
 .data/
+/local-db/
+
+# local review artifacts
+/screenshots/
 
 # env files
 .env*.local

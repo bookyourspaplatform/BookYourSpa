@@ -147,7 +147,7 @@ export default async function BranchDetailPage({
 
       {tab === 'products' && <BranchProductsTab branchId={branch.id} currency={branch.currency} />}
 
-      {tab === 'staff' && <BranchStaffTab branchId={branch.id} providerId={providerId} branchName={branch.name} />}
+      {tab === 'staff' && <BranchStaffTab branchId={branch.id} providerId={providerId} branchName={branch.name} currency={branch.currency} />}
 
       {tab === 'promotions' && <BranchPromotionsTab branchId={branch.id} />}
 
@@ -291,7 +291,17 @@ async function BranchProductsTab({ branchId, currency }: { branchId: string; cur
 
 /* -------------------------------- staff tab -------------------------------- */
 
-async function BranchStaffTab({ branchId, providerId, branchName }: { branchId: string; providerId: string; branchName: string }) {
+async function BranchStaffTab({
+  branchId,
+  providerId,
+  branchName,
+  currency,
+}: {
+  branchId: string;
+  providerId: string;
+  branchName: string;
+  currency: string;
+}) {
   const db = await getDb();
   const therapistRows = await db.query.therapists.findMany({
     where: eq(therapists.branchId, branchId),
@@ -326,6 +336,12 @@ async function BranchStaffTab({ branchId, providerId, branchName }: { branchId: 
     name: t.name,
     bio: t.bio,
     specialties: t.specialties,
+    avatarUrl: t.avatarUrl,
+    role: t.role,
+    salaryType: t.salaryType,
+    salaryValue: t.salaryValue,
+    incentiveType: t.incentiveType,
+    incentiveValue: t.incentiveValue,
     active: t.active,
     shiftCount: shiftRows.find((s) => s.therapistId === t.id)?.n ?? 0,
     next7Count: upcomingRows.find((u) => u.therapistId === t.id)?.n ?? 0,
@@ -334,7 +350,7 @@ async function BranchStaffTab({ branchId, providerId, branchName }: { branchId: 
   return (
     <TherapistManager
       therapists={rows}
-      branches={[{ id: branchId, name: branchName }]}
+      branches={[{ id: branchId, name: branchName, currency }]}
     />
   );
 }

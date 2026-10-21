@@ -14,6 +14,34 @@ const nextConfig: NextConfig = {
       },
     },
   },
+  async redirects() {
+    // Renamed public URLs stay reachable (old booking emails / search index).
+    const branchRenames: Record<string, string> = {
+      seminyak: 'bali-orchid-spa',
+      ubud: 'royal-orchid-spa',
+    };
+    const rules = [
+      {
+        source: '/spas/aranjaya-spa-wellness/:branch*',
+        destination: '/spas/orchid-spa/:branch*',
+        permanent: true,
+      },
+      {
+        source: '/spas/aranjaya-spa-wellness',
+        destination: '/spas/orchid-spa',
+        permanent: true,
+      },
+    ];
+    for (const [oldSlug, newSlug] of Object.entries(branchRenames)) {
+      rules.push({
+        source: `/spas/:provider/${oldSlug}`,
+        destination: `/spas/:provider/${newSlug}`,
+        permanent: true,
+      });
+    }
+    return rules;
+  },
+
   async headers() {
     const csp = [
       "default-src 'self'",

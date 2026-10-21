@@ -39,6 +39,14 @@ export type TreatmentCategory = (typeof TREATMENT_CATEGORIES)[number];
 export const BOOKING_STATUSES = ['pending', 'confirmed', 'cancelled', 'completed', 'no_show'] as const;
 export type BookingStatus = (typeof BOOKING_STATUSES)[number];
 
+/** Staff roles on a spa's team — admin can run the POS till. */
+export const STAFF_ROLES = ['admin', 'worker', 'therapist'] as const;
+export type StaffRole = (typeof STAFF_ROLES)[number];
+
+/** fixed = manual amount, percent = share of each job performed. */
+export const STAFF_PAY_TYPES = ['fixed', 'percent'] as const;
+export type StaffPayType = (typeof STAFF_PAY_TYPES)[number];
+
 export const PAYMENT_STATUSES = [
   'unpaid',
   'processing',
@@ -52,7 +60,7 @@ export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
 export const PAYMENT_GATEWAYS = ['stripe', 'paypal', 'razorpay', 'venue'] as const;
 export type PaymentGateway = (typeof PAYMENT_GATEWAYS)[number];
 
-export const BOOKING_CHANNELS = ['direct', 'agent', 'admin'] as const;
+export const BOOKING_CHANNELS = ['direct', 'agent', 'admin', 'pos'] as const;
 export type BookingChannel = (typeof BOOKING_CHANNELS)[number];
 
 export const AGENT_TYPES = [
@@ -413,6 +421,14 @@ export const therapists = pgTable(
     bio: text('bio'),
     specialties: text('specialties').array().notNull().default(sql`'{}'::text[]`),
     avatarUrl: text('avatar_url'),
+    /** admin = can run the POS, worker = general staff, therapist = serves guests. */
+    role: text('role', { enum: STAFF_ROLES }).notNull().default('therapist'),
+    /** Salary: fixed = minor units per month, percent = basis points of each job. */
+    salaryType: text('salary_type', { enum: STAFF_PAY_TYPES }).notNull().default('fixed'),
+    salaryValue: integer('salary_value').notNull().default(0),
+    /** Job fee / incentive: fixed = minor units, percent = basis points of each job. */
+    incentiveType: text('incentive_type', { enum: STAFF_PAY_TYPES }).notNull().default('fixed'),
+    incentiveValue: integer('incentive_value').notNull().default(0),
     active: boolean('active').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true })

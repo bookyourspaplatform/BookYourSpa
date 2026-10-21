@@ -9,7 +9,7 @@ import { TherapistManager, type TherapistRow } from '@/components/provider/thera
 export const dynamic = 'force-dynamic';
 
 export async function generateMetadata(): Promise<Metadata> {
-  return pageMetadata({ title: 'Therapists', description: 'Your team.', path: '/provider/therapists', noIndex: true });
+  return pageMetadata({ title: 'Staff', description: 'Your team.', path: '/provider/therapists', noIndex: true });
 }
 
 export default async function ProviderTherapistsPage() {
@@ -20,7 +20,7 @@ export default async function ProviderTherapistsPage() {
   const branchRows = await db.query.branches.findMany({
     where: eq(branches.providerId, providerId),
     orderBy: [branches.name],
-    columns: { id: true, name: true },
+    columns: { id: true, name: true, currency: true },
   });
 
   const therapistRows = await db.query.therapists.findMany({
@@ -57,6 +57,12 @@ export default async function ProviderTherapistsPage() {
     name: t.name,
     bio: t.bio,
     specialties: t.specialties,
+    avatarUrl: t.avatarUrl,
+    role: t.role,
+    salaryType: t.salaryType,
+    salaryValue: t.salaryValue,
+    incentiveType: t.incentiveType,
+    incentiveValue: t.incentiveValue,
     active: t.active,
     shiftCount: shiftRows.find((s) => s.therapistId === t.id)?.n ?? 0,
     next7Count: upcomingRows.find((u) => u.therapistId === t.id)?.n ?? 0,
@@ -65,10 +71,10 @@ export default async function ProviderTherapistsPage() {
   return (
     <div className="space-y-5">
       <div>
-        <h1 className="text-xl sm:text-2xl">Therapists</h1>
+        <h1 className="text-xl sm:text-2xl">Staff</h1>
         <p className="mt-0.5 text-sm text-ink-500">
           {rows.length} team member{rows.length === 1 ? '' : 's'} across {branchRows.length} branch
-          {branchRows.length === 1 ? '' : 'es'}.
+          {branchRows.length === 1 ? '' : 'es'} — admins, workers and therapists.
         </p>
       </div>
       <TherapistManager therapists={rows} branches={branchRows} />

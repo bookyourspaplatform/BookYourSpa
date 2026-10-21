@@ -309,13 +309,22 @@ export default async function BranchDetailPage({
               <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {therapistList.map((t) => (
                   <div key={t.id} className="flex items-start gap-3 rounded-2xl border border-ink-100 bg-white p-4">
-                    <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-brand-100 font-display text-brand-800">
-                      {t.name
-                        .split(/\s+/)
-                        .slice(0, 2)
-                        .map((w) => w[0])
-                        .join('')}
-                    </span>
+                    {t.avatarUrl ? (
+                      /* eslint-disable-next-line @next/next/no-img-element -- staff photo uploaded by the spa */
+                      <img
+                        src={t.avatarUrl}
+                        alt={t.name}
+                        className="size-10 shrink-0 rounded-full border border-ink-100 object-cover"
+                      />
+                    ) : (
+                      <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-brand-100 font-display text-brand-800">
+                        {t.name
+                          .split(/\s+/)
+                          .slice(0, 2)
+                          .map((w) => w[0])
+                          .join('')}
+                      </span>
+                    )}
                     <div className="min-w-0">
                       <p className="text-[14.5px] font-medium">{t.name}</p>
                       {t.bio && <p className="mt-0.5 line-clamp-2 text-[13px] text-ink-500">{t.bio}</p>}

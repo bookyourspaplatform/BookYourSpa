@@ -50,7 +50,7 @@ npm run db:reset    # wipe the LOCAL database and re-seed (never touches DATABAS
 | --- | --- | --- |
 | Super Admin | `portal@bookyourspa.net` | `BYS154@bys` |
 | Supplier / POS (Dubai, AED) | `booking@homecarespa.ae` | `HCS154@bys` |
-| Supplier / POS | `owner@aranjaya.com` | `HCS154@bys` |
+| Supplier / POS | `baliorchidspa@bookyourspa.net` | `BOS@test` |
 | Agent / Reseller | `info@balithingstodo.net` | `BTTD154@bys` |
 | Customer | `appsdaeng@gmail.com` | `apps154@bys` |
 

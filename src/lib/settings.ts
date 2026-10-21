@@ -27,6 +27,8 @@ export const DEFAULT_SETTINGS = {
   'booking.pendingHoldMinutes': 30,
   'booking.defaultIntervalMinutes': 30,
   'finance.defaultPlatformCommissionBps': 1500,
+  /** Commission charged on walk-in sales taken through the POS till. */
+  'finance.posCommissionBps': 300,
   'finance.defaultAgentCommissionBps': 1000,
   'finance.defaultCurrency': 'IDR',
   'features.onlinePayments': true,

@@ -382,7 +382,13 @@ export async function getSpaDetail(db: AppDb, slug: string): Promise<SpaDetail |
 export type BranchDetail = {
   branch: Branch & { provider: Provider };
   treatments: (Treatment & { price: number })[];
-  therapistList: { id: string; name: string; bio: string | null; specialties: string[] }[];
+  therapistList: {
+    id: string;
+    name: string;
+    bio: string | null;
+    specialties: string[];
+    avatarUrl: string | null;
+  }[];
   promos: Promotion[];
 };
 
@@ -411,8 +417,13 @@ export async function getBranchDetail(
       with: { treatment: true },
     }),
     db.query.therapists.findMany({
-      where: and(eq(therapists.branchId, branch.id), eq(therapists.active, true)),
-      columns: { id: true, name: true, bio: true, specialties: true },
+      // Only treating staff are bookable/published — admins and workers stay internal.
+      where: and(
+        eq(therapists.branchId, branch.id),
+        eq(therapists.active, true),
+        eq(therapists.role, 'therapist'),
+      ),
+      columns: { id: true, name: true, bio: true, specialties: true, avatarUrl: true },
       orderBy: [asc(therapists.name)],
     }),
     db.query.promotions.findMany({
