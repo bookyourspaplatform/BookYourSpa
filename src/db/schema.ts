@@ -118,8 +118,20 @@ export const SPA_TYPES = [
   'retreats_packages',
   'couples_romantic',
   'sensual_wellness',
+  'spa_package',
 ] as const;
 export type SpaType = (typeof SPA_TYPES)[number];
+
+/** Who a treatment is for. */
+export const TREATMENT_GENRES = ['both', 'man_only', 'woman_only'] as const;
+export type TreatmentGenre = (typeof TREATMENT_GENRES)[number];
+
+/** Where a treatment is delivered. */
+export const TREATMENT_DELIVERY_TYPES = ['both', 'in_spa', 'doorstep'] as const;
+export type TreatmentDeliveryType = (typeof TREATMENT_DELIVERY_TYPES)[number];
+
+/** One price tier of a treatment: duration + price + concurrent capacity. */
+export type TreatmentPriceOption = { durationMin: number; price: number; capacity: number };
 
 export const SPA_FACILITIES = [
   'sauna',
@@ -264,6 +276,10 @@ export const branches = pgTable(
       .default(sql`'{}'::text[]`),
     /** Therapists travel to the guest (massage on call / doorstep). */
     doorstepService: boolean('doorstep_service').notNull().default(false),
+    /** Publicly list the branch's therapists (profiles + online booking). */
+    showTherapistOnline: boolean('show_therapist_online').notNull().default(false),
+    /** Commission (basis points) paid to agents/resellers/affiliates for this branch — null = the partner's own default rate. */
+    agentFeeBps: integer('agent_fee_bps'),
     facilities: text('facilities', { enum: SPA_FACILITIES })
       .array()
       .notNull()
@@ -325,6 +341,12 @@ export const treatments = pgTable(
     imageUrl: text('image_url'),
     benefits: text('benefits').array().notNull().default(sql`'{}'::text[]`),
     tags: text('tags').array().notNull().default(sql`'{}'::text[]`),
+    /** Who the treatment is for. */
+    genre: text('genre', { enum: TREATMENT_GENRES }).notNull().default('both'),
+    /** Where the treatment is delivered. */
+    deliveryType: text('delivery_type', { enum: TREATMENT_DELIVERY_TYPES }).notNull().default('both'),
+    /** Duration/price/capacity tiers — the first option is the canonical booking default. */
+    priceOptions: jsonb('price_options').$type<TreatmentPriceOption[]>().default([]),
     requiresTherapist: boolean('requires_therapist').notNull().default(true),
     /** Seats/rooms available concurrently for non-therapist treatments. */
     capacity: integer('capacity').notNull().default(1),

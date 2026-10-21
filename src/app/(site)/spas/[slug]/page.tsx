@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation';
 import { Clock, MapPin, Phone, ArrowRight, BadgePercent } from 'lucide-react';
 import { getDb } from '@/db';
 import { getSpaDetail, CATEGORY_LABELS } from '@/lib/catalog';
+import { stripHtml } from '@/lib/security';
 import { appUrl, breadcrumbJsonLd, daySpaJsonLd, pageMetadata, treatmentJsonLd } from '@/lib/seo';
 import { JsonLd } from '@/components/json-ld';
 import { Badge } from '@/components/ui/badge';
@@ -79,7 +80,7 @@ export default async function SpaDetailPage({ params }: { params: Promise<{ slug
       treatmentJsonLd({
         name: t.name,
         url: `${url}#menu`,
-        description: t.description ?? `${t.name} at ${spa.provider.name}`,
+        description: t.description ? stripHtml(t.description) : `${t.name} at ${spa.provider.name}`,
         image: t.imageUrl,
         duration: `${t.durationMin} minutes`,
         price: t.branchPrices[0]?.price ?? null,
@@ -199,7 +200,9 @@ export default async function SpaDetailPage({ params }: { params: Promise<{ slug
                           </Badge>
                         )}
                       </div>
-                      {t.description && <p className="mt-1 line-clamp-2 text-[13.5px] text-ink-500">{t.description}</p>}
+                      {t.description && (
+                        <p className="mt-1 line-clamp-2 text-[13.5px] text-ink-500">{stripHtml(t.description)}</p>
+                      )}
                       <p className="mt-1.5 text-[13px] text-ink-400">
                         {t.durationMin} min · from {cheapestBranch}
                         {t.branchPrices.length > 1 && ` (best of ${t.branchPrices.length} branches)`}

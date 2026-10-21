@@ -4,7 +4,7 @@ import { notFound } from 'next/navigation';
 import { Clock, MapPin, Navigation, Phone, UserRound } from 'lucide-react';
 import { getDb } from '@/db';
 import { getBranchDetail, CATEGORY_LABELS, SPA_CATEGORY_LABELS, SPA_FACILITY_LABELS, SPA_TYPE_LABELS } from '@/lib/catalog';
-import { sanitizeRichText } from '@/lib/security';
+import { sanitizeRichText, stripHtml } from '@/lib/security';
 import { appUrl, breadcrumbJsonLd, daySpaJsonLd, pageMetadata, treatmentJsonLd } from '@/lib/seo';
 import { JsonLd } from '@/components/json-ld';
 import { Badge } from '@/components/ui/badge';
@@ -68,7 +68,7 @@ export default async function BranchDetailPage({
     daySpaJsonLd({
       name: `${provider.name} — ${b.name}`,
       url,
-      description: b.description ?? undefined,
+      description: b.description ? stripHtml(b.description) : undefined,
       priceRange: treatments.length ? formatMoney(treatments[0]!.price, b.currency) : undefined,
       address: { street: b.addressLine, city: b.city, region: b.region, country: b.country },
       geo: b.lat && b.lng ? { lat: b.lat, lng: b.lng } : null,
@@ -88,7 +88,7 @@ export default async function BranchDetailPage({
       treatmentJsonLd({
         name: t.name,
         url: `${url}?treatment=${t.id}`,
-        description: t.description ?? t.name,
+        description: t.description ? stripHtml(t.description) : t.name,
         image: t.imageUrl,
         duration: `${t.durationMin} minutes`,
         price: t.price,
@@ -132,9 +132,11 @@ export default async function BranchDetailPage({
                     <Phone className="size-4" /> {b.phone}
                   </span>
                 )}
-                <span className="inline-flex items-center gap-1.5">
-                  <UserRound className="size-4" /> {therapistList.length} therapists
-                </span>
+                {b.showTherapistOnline && (
+                  <span className="inline-flex items-center gap-1.5">
+                    <UserRound className="size-4" /> {therapistList.length} therapists
+                  </span>
+                )}
               </div>
               {b.tagline && <p className="mt-3 text-[17px] font-medium text-white">{b.tagline}</p>}
               {b.shortDescription && <p className="mt-1 max-w-xl text-[14px] leading-relaxed text-brand-100/80">{b.shortDescription}</p>}
@@ -264,7 +266,12 @@ export default async function BranchDetailPage({
                         <Badge tone="brand">{CATEGORY_LABELS[t.category] ?? t.category}</Badge>
                         {!t.requiresTherapist && <Badge tone="info">Shared facility</Badge>}
                       </div>
-                      {t.description && <p className="mt-1.5 text-[14px] leading-relaxed text-ink-600">{t.description}</p>}
+                      {t.description && (
+                        <div
+                          className="prose prose-sm mt-1.5 max-w-none text-[14px] leading-relaxed text-ink-600 [&_p]:my-1 [&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-5 [&_a]:text-brand-700 [&_a]:underline"
+                          dangerouslySetInnerHTML={{ __html: sanitizeRichText(t.description) }}
+                        />
+                      )}
                       <div className="mt-2 flex flex-wrap gap-1.5">
                         {t.benefits.map((ben) => (
                           <span key={ben} className="rounded-full bg-sand-100 px-2.5 py-0.5 text-[12px] text-ink-600">
@@ -294,7 +301,7 @@ export default async function BranchDetailPage({
             )}
           </div>
 
-          {therapistList.length > 0 && (
+          {b.showTherapistOnline && therapistList.length > 0 && (
             <section className="mt-9" aria-labelledby="team-heading">
               <h2 id="team-heading" className="text-2xl">
                 Therapists

@@ -51,7 +51,6 @@ export default async function ProviderTreatmentsPage() {
   const menuRows: TreatmentRow[] = treatmentRows.map((t) => ({
     id: t.id,
     name: t.name,
-    category: t.category,
     description: t.description,
     durationMin: t.durationMin,
     listPrice: t.listPrice,
@@ -60,6 +59,9 @@ export default async function ProviderTreatmentsPage() {
     capacity: t.capacity,
     agentApproved: t.agentApproved,
     tags: t.tags ?? [],
+    genre: t.genre,
+    deliveryType: t.deliveryType,
+    priceOptions: t.priceOptions ?? [],
     status: t.status,
     branchCount: branchCountByTreatment.get(t.id) ?? 0,
   }));

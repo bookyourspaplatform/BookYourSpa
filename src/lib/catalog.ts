@@ -94,6 +94,19 @@ export const SPA_TYPE_LABELS: Record<string, string> = {
   retreats_packages: 'Wellness Retreats & Packages',
   couples_romantic: 'Couples & Romantic Spa',
   sensual_wellness: 'Sensual Wellness',
+  spa_package: 'Spa Package',
+};
+
+export const GENRE_LABELS: Record<string, string> = {
+  both: 'Both',
+  man_only: 'Man Only',
+  woman_only: 'Woman Only',
+};
+
+export const DELIVERY_TYPE_LABELS: Record<string, string> = {
+  both: 'Both',
+  in_spa: 'In Spa',
+  doorstep: 'Doorstep',
 };
 
 export const SPA_FACILITY_LABELS: Record<string, string> = {

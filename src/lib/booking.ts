@@ -105,7 +105,12 @@ export async function quoteBooking(db: AppDb, input: QuoteInput): Promise<Quote>
       const rate = await db.query.agentRates.findFirst({
         where: and(eq(agentRates.agentId, agent.id), eq(agentRates.treatmentId, treatment.id)),
       });
-      agentTerms = { commissionBps: agent.commissionBps, netPrice: rate?.active ? rate.netPrice : null };
+      // The branch can set its own agent/reseller/affiliate fee (%); it
+      // overrides the partner's default rate when configured.
+      agentTerms = {
+        commissionBps: branch.agentFeeBps ?? agent.commissionBps,
+        netPrice: rate?.active ? rate.netPrice : null,
+      };
     }
   }
 

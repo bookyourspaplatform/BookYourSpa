@@ -91,6 +91,8 @@ export default async function BranchDetailPage({
     categories: branch.categories ?? [],
     spaTypes: branch.spaTypes ?? [],
     doorstepService: branch.doorstepService,
+    showTherapistOnline: branch.showTherapistOnline,
+    agentFeeBps: branch.agentFeeBps,
     facilities: branch.facilities ?? [],
     description: branch.description,
     images: branch.images ?? [],

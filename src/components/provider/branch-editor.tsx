@@ -44,6 +44,8 @@ export type BranchRow = {
   categories: string[];
   spaTypes: string[];
   doorstepService: boolean;
+  showTherapistOnline: boolean;
+  agentFeeBps: number | null;
   facilities: string[];
   description: string | null;
   images: string[];
@@ -79,6 +81,9 @@ type Draft = {
   categories: string[];
   spaTypes: string[];
   doorstepService: boolean;
+  showTherapistOnline: boolean;
+  /** Agent/reseller/affiliate fee as a percent string ('' = partner default). */
+  agentFeePercent: string;
   facilities: string[];
   description: string;
   images: string[];
@@ -111,6 +116,8 @@ export const EMPTY_BRANCH_ROW: Draft = {
   categories: [],
   spaTypes: [],
   doorstepService: false,
+  showTherapistOnline: true,
+  agentFeePercent: '',
   facilities: [],
   description: '',
   images: [],
@@ -160,6 +167,7 @@ function toDraft(branch: BranchRow | null): Draft {
     description: branch.description ?? '',
     categories: branch.categories ?? [],
     spaTypes: branch.spaTypes ?? [],
+    agentFeePercent: branch.agentFeeBps != null ? String(branch.agentFeeBps / 100) : '',
     facilities: branch.facilities ?? [],
     images: branch.images ?? [],
     hours: branch.hours.length ? branch.hours : EMPTY_BRANCH_ROW.hours,
@@ -306,6 +314,11 @@ export function BranchEditor({
         categories: draft.categories as (typeof SPA_CATEGORIES)[number][],
         spaTypes: draft.spaTypes as (typeof SPA_TYPES)[number][],
         doorstepService: draft.doorstepService,
+        showTherapistOnline: draft.showTherapistOnline,
+        agentFeeBps:
+          draft.agentFeePercent.trim() === '' || !Number.isFinite(Number(draft.agentFeePercent))
+            ? null
+            : Math.min(100, Math.max(0, Math.round(Number(draft.agentFeePercent) * 100))),
         facilities: draft.facilities as (typeof SPA_FACILITIES)[number][],
         description: draft.description?.trim() || null,
         images: draft.images.filter(isRenderableImage).slice(0, MAX_BRANCH_IMAGES),
@@ -657,6 +670,43 @@ export function BranchEditor({
           <span className="mt-0.5 block text-[12.5px] text-ink-500">Your therapists bring the table and products to the guest&apos;s home or hotel.</span>
         </span>
       </label>
+
+      <label className="mt-3 flex items-start gap-2.5 rounded-xl border border-ink-100 bg-sand-50 p-3.5 text-sm text-ink-700">
+        <input
+          type="checkbox"
+          checked={draft.showTherapistOnline}
+          onChange={(e) => set('showTherapistOnline', e.target.checked)}
+          className="mt-0.5 size-4 accent-[#20524c]"
+        />
+        <span>
+          Show Therapist Online
+          <span className="mt-0.5 block text-[12.5px] text-ink-500">List your therapists on the spa page so guests can pick them when booking.</span>
+        </span>
+      </label>
+
+      <div className="mt-3 rounded-xl border border-ink-100 bg-sand-50 p-3.5">
+        <label htmlFor="agent-fee" className="text-sm text-ink-700">
+          Agent / Reseller / Affiliate fee
+        </label>
+        <p className="mt-0.5 text-[12.5px] text-ink-500">
+          Percentage of each booking paid to agents, resellers and affiliates who sell this spa. Leave empty to use each
+          partner&apos;s own default rate.
+        </p>
+        <div className="mt-2 flex items-center gap-2">
+          <input
+            id="agent-fee"
+            type="number"
+            min={0}
+            max={100}
+            step={0.5}
+            value={draft.agentFeePercent}
+            onChange={(e) => set('agentFeePercent', e.target.value)}
+            placeholder="e.g. 12"
+            className="h-10 w-28 rounded-xl border border-ink-200 bg-white px-3 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/15"
+          />
+          <span className="text-sm text-ink-500">%</span>
+        </div>
+      </div>
 
       <Section title="Spa facilities" hint="Amenities guests can expect on site.">
         <ChipToggle

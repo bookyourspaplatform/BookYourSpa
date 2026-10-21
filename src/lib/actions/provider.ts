@@ -20,7 +20,8 @@ import {
   SPA_CATEGORIES,
   SPA_FACILITIES,
   SPA_TYPES,
-  TREATMENT_CATEGORIES,
+  TREATMENT_GENRES,
+  TREATMENT_DELIVERY_TYPES,
   USER_STATUSES,
 } from '@/db/schema';
 import { sanitizeRichText } from '@/lib/security';
@@ -124,6 +125,9 @@ const branchSchema = z.object({
   categories: z.array(z.enum(SPA_CATEGORIES)).max(6).default([]),
   spaTypes: z.array(z.enum(SPA_TYPES)).max(20).default([]),
   doorstepService: z.boolean().default(false),
+  showTherapistOnline: z.boolean().default(false),
+  /** Agent/reseller/affiliate fee in basis points (1500 = 15%); null = partner default. */
+  agentFeeBps: z.number().int().min(0).max(10000).optional().nullable(),
   facilities: z.array(z.enum(SPA_FACILITIES)).max(20).default([]),
   images: z
     .array(z.string().max(4_000_000))
@@ -445,18 +449,26 @@ export async function setBranchStatus(branchId: string, status: 'active' | 'susp
 
 /* ----------------------------- treatments ---------------------------- */
 
+const priceOptionSchema = z.object({
+  durationMin: z.number().int().min(5).max(600),
+  price: z.number().int().min(0).max(1_000_000_000),
+  capacity: z.number().int().min(1).max(50),
+});
+
 const treatmentSchema = z.object({
   id: z.string().optional(),
   name: z.string().min(2).max(120),
-  category: z.enum(TREATMENT_CATEGORIES),
-  description: z.string().max(4000).optional().nullable(),
-  durationMin: z.number().int().min(5).max(600),
-  listPrice: z.number().int().min(0).max(1_000_000_000),
-  requiresTherapist: z.boolean(),
-  capacity: z.number().int().min(1).max(50),
+  /** Rich-text HTML (sanitized below). */
+  description: z.string().max(40000).optional().nullable(),
+  /** Duration/price/capacity tiers; the first option drives booking defaults. */
+  priceOptions: z.array(priceOptionSchema).min(1).max(10),
+  genre: z.enum(TREATMENT_GENRES).default('both'),
+  deliveryType: z.enum(TREATMENT_DELIVERY_TYPES).default('both'),
+  requiresTherapist: z.boolean().default(true),
   agentApproved: z.boolean(),
-  /** Spa-type tags (shared vocabulary with the spa editor). */
-  tags: z.array(z.string().max(60)).max(14).default([]),
+  /** Spa-type tags (shared vocabulary with the spa editor). Free-form input
+   *  is accepted and filtered to known spa types so legacy rows stay editable. */
+  tags: z.array(z.string().max(60)).max(20).default([]),
   status: z.enum(USER_STATUSES).optional(),
 });
 
@@ -467,12 +479,30 @@ export async function saveTreatment(input: z.infer<typeof treatmentSchema>): Pro
     const { db, providerId, user } = await providerCtx();
     const data = parsed.data;
 
+    // Rich text sanitized; legacy single-price columns mirror the first option
+    // so availability/booking flows keep working unchanged.
+    const primary = data.priceOptions[0]!;
+    const knownTypes = new Set<string>(SPA_TYPES);
+    const payload = {
+      description: data.description ? sanitizeRichText(data.description) : null,
+      priceOptions: data.priceOptions,
+      durationMin: primary.durationMin,
+      listPrice: primary.price,
+      capacity: primary.capacity,
+      genre: data.genre,
+      deliveryType: data.deliveryType,
+      requiresTherapist: data.requiresTherapist,
+      agentApproved: data.agentApproved,
+      tags: data.tags.filter((t) => knownTypes.has(t)) as (typeof SPA_TYPES)[number][],
+      ...(data.status ? { status: data.status } : {}),
+    };
+
     if (data.id) {
       await assertTreatment(db, providerId, data.id);
-      const { id, ...rest } = data;
+      const { id } = data;
       await db
         .update(treatments)
-        .set({ ...rest, updatedAt: new Date() })
+        .set({ ...payload, updatedAt: new Date() })
         .where(and(eq(treatments.id, id), eq(treatments.providerId, providerId)));
       await logAudit({ actorId: user.id, actorRole: user.role, action: 'treatment.updated', entity: 'treatment', entityId: id });
       revalidateProvider(providerId, ['/provider/treatments', '/provider/branches']);
@@ -488,7 +518,8 @@ export async function saveTreatment(input: z.infer<typeof treatmentSchema>): Pro
     const [created] = await db
       .insert(treatments)
       .values({
-        ...data,
+        ...payload,
+        name: data.name,
         id: newId('trt'),
         providerId,
         slug,

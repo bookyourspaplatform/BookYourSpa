@@ -5,6 +5,7 @@ import { AlertCircle } from 'lucide-react';
 import { getDb } from '@/db';
 import { getBranchDetail } from '@/lib/catalog';
 import { getCurrentUser } from '@/lib/auth/session';
+import { stripHtml } from '@/lib/security';
 import { getSettings } from '@/lib/settings';
 import { pageMetadata, breadcrumbJsonLd, appUrl } from '@/lib/seo';
 import { JsonLd } from '@/components/json-ld';
@@ -108,7 +109,7 @@ export default async function BookPage({
         treatments={detail.treatments.map((t) => ({
           id: t.id,
           name: t.name,
-          description: t.description ?? '',
+          description: t.description ? stripHtml(t.description) : '',
           durationMin: t.durationMin,
           price: t.price,
           category: t.category,
