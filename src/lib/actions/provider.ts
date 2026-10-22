@@ -502,6 +502,7 @@ export async function saveTreatment(input: z.infer<typeof treatmentSchema>): Pro
     const primary = data.priceOptions[0]!;
     const knownTypes = new Set<string>(SPA_TYPES);
     const payload = {
+      name: data.name,
       description: data.description ? sanitizeRichText(data.description) : null,
       priceOptions: data.priceOptions,
       durationMin: primary.durationMin,
@@ -537,7 +538,6 @@ export async function saveTreatment(input: z.infer<typeof treatmentSchema>): Pro
       .insert(treatments)
       .values({
         ...payload,
-        name: data.name,
         id: newId('trt'),
         providerId,
         slug,

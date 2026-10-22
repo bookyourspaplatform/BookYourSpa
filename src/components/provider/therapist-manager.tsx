@@ -40,13 +40,13 @@ const ROLE_LABELS: Record<StaffRole, string> = {
 const ROLE_HINTS: Record<StaffRole, string> = {
   admin: 'Runs the front desk and the POS till (/provider/pos). Paid a fixed salary and bonus.',
   worker: 'General staff — housekeeping, reception, support. Paid a fixed salary and bonus.',
-  therapist: 'Serves guests and appears in the booking wizard. Paid a share of every job done.',
+  therapist: 'Serves guests and appears in the booking wizard. Paid a monthly salary plus a share of every job done.',
 };
 
-/** Admins and workers are paid fixed amounts; therapists earn a share per job. */
+/** Everyone is paid a fixed monthly salary; therapists also earn a share per job. */
 function payTypesForRole(role: StaffRole): { salaryType: StaffPayType; incentiveType: StaffPayType } {
   return role === 'therapist'
-    ? { salaryType: 'percent', incentiveType: 'percent' }
+    ? { salaryType: 'fixed', incentiveType: 'percent' }
     : { salaryType: 'fixed', incentiveType: 'fixed' };
 }
 
