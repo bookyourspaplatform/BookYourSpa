@@ -1,13 +1,15 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { bookings, branches, providers, treatments, users } from '@/db/schema';
+import { bookings, branches, providerClaims, providers, treatments, users } from '@/db/schema';
 import { pageMetadata } from '@/lib/seo';
 import { Badge } from '@/components/ui/badge';
 import { formatMoney } from '@/lib/money';
 import { formatDate, cn } from '@/lib/utils';
 import { StatusActions } from '@/components/admin/status-actions';
+import { AddProviderForm } from '@/components/admin/add-provider-form';
+import { ClaimsQueue, type ClaimRow } from '@/components/admin/claims-queue';
 
 export const dynamic = 'force-dynamic';
 
@@ -59,6 +61,25 @@ export default async function AdminProvidersPage({
     : [];
   const gmvBy = new Map(gmvRows.map((g) => [g.providerId, g]));
 
+  const claimRows = await db.query.providerClaims.findMany({
+    where: eq(providerClaims.status, 'pending'),
+    with: {
+      provider: { columns: { name: true, slug: true } },
+      user: { columns: { name: true, email: true } },
+    },
+    orderBy: [asc(providerClaims.createdAt)],
+    limit: 25,
+  });
+  const claims: ClaimRow[] = claimRows.map((c) => ({
+    id: c.id,
+    providerName: c.provider.name,
+    providerSlug: c.provider.slug,
+    email: c.email,
+    userName: c.user?.name ?? null,
+    message: c.message,
+    createdAt: c.createdAt,
+  }));
+
   const linkFor = (s: string) => (s === 'all' ? '/admin/providers' : `/admin/providers?status=${s}`);
 
   return (
@@ -70,6 +91,12 @@ export default async function AdminProvidersPage({
           breach marketplace policy.
         </p>
       </div>
+
+      <div className="rounded-3xl border border-ink-100 bg-white p-4 sm:p-5">
+        <AddProviderForm />
+      </div>
+
+      <ClaimsQueue claims={claims} />
 
       <div className="flex gap-1.5 overflow-x-auto">
         {STATUSES.map((s) => (
@@ -102,10 +129,12 @@ export default async function AdminProvidersPage({
                     <div className="flex flex-wrap items-center gap-2">
                       <h2 className="text-[16px] font-medium">{p.name}</h2>
                       <Badge tone={STATUS_TONE[p.status] ?? 'neutral'}>{p.status}</Badge>
+                      {!p.ownerId && <Badge tone="warning">unclaimed</Badge>}
                       {p.featured && <Badge tone="brand">featured</Badge>}
                     </div>
                     <p className="mt-1 text-[13.5px] text-ink-500">
-                      /spas/{p.slug} · {p.country} · {p.baseCurrency} · owner {p.owner?.name} ({p.owner?.email})
+                      /spas/{p.slug} · {p.country} · {p.baseCurrency} ·{' '}
+                      {p.owner ? `owner ${p.owner.name} (${p.owner.email})` : 'no owner yet — awaiting claim'}
                     </p>
                     <p className="mt-1 text-[13px] text-ink-400">
                       {activeBranches}/{p.branches.length} branches active ·{' '}

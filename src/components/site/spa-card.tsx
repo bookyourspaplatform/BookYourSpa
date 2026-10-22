@@ -25,7 +25,7 @@ function initialsOf(name: string) {
 }
 
 /** Rough spend level from the provider's min price in its own currency. */
-function priceLevel(minPrice: number | null, currency: string): string {
+export function priceLevel(minPrice: number | null, currency: string): string {
   if (minPrice === null) return '';
   const major = currency === 'IDR' || currency === 'JPY' ? minPrice : minPrice / 100;
   const expensive =

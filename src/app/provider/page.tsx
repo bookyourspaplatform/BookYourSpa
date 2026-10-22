@@ -5,6 +5,8 @@ import { CalendarClock, ClipboardList, Coins, Store, Users } from 'lucide-react'
 import { getDb } from '@/db';
 import { bookings, branches, therapists, treatments } from '@/db/schema';
 import { getCurrentUser } from '@/lib/auth/session';
+import { listConfirmableClaims } from '@/lib/claims';
+import { ClaimBanner } from '@/components/site/claim-banner';
 import { formatMoney } from '@/lib/money';
 import { dateKeyInTz, formatDate, formatDateTime } from '@/lib/utils';
 import { pageMetadata } from '@/lib/seo';
@@ -25,6 +27,7 @@ export default async function ProviderOverview() {
   const user = (await getCurrentUser())!;
   const providerId = user.provider!.id;
   const db = await getDb();
+  const claimInvites = await listConfirmableClaims(db, user.email);
 
   const sixMonthsAgo = new Date();
   sixMonthsAgo.setUTCDate(1);
@@ -103,6 +106,7 @@ export default async function ProviderOverview() {
 
   return (
     <div className="space-y-6">
+      <ClaimBanner claims={claimInvites} />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl sm:text-2xl">Welcome back, {user.name.split(' ')[0]}</h1>

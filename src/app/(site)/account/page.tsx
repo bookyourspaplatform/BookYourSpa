@@ -5,6 +5,8 @@ import { getDb } from '@/db';
 import { getCurrentUser } from '@/lib/auth/session';
 import { getSettings } from '@/lib/settings';
 import { getMyBookings, bookingSummary, canCancelCustomer } from '@/lib/account';
+import { listConfirmableClaims } from '@/lib/claims';
+import { ClaimBanner } from '@/components/site/claim-banner';
 import { formatDateTime, formatDate } from '@/lib/utils';
 import { formatMoney } from '@/lib/money';
 import { pageMetadata } from '@/lib/seo';
@@ -31,6 +33,7 @@ export default async function AccountOverviewPage() {
   const rows = await getMyBookings(db, user);
   const s = bookingSummary(rows);
   const next = s.next;
+  const claimInvites = await listConfirmableClaims(db, user.email);
 
   return (
     <div className="space-y-7">
@@ -40,6 +43,8 @@ export default async function AccountOverviewPage() {
           ? `Your next treatment is ${formatDate(next.startAt, next.timezone)}.`
           : 'Ready for some relaxation?'}
       </p>
+
+      <ClaimBanner claims={claimInvites} />
 
       <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <StatCard label="Upcoming" value={String(s.upcoming.length)} icon={<CalendarCheck2 className="size-4" />} />

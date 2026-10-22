@@ -50,6 +50,13 @@
       "when": 1792643046018,
       "tag": "0006_therapist_monthly_salary",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792651376633,
+      "tag": "0007_provider_claims",
+      "breakpoints": true
     }
   ]
 }

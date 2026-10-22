@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, ilike, inArray, isNull, or, sql } from 'drizzle-orm';
 import type { AppDb } from '@/db';
 import {
   branches,
@@ -397,6 +397,21 @@ export type SpaDetail = {
   provider: Provider;
   branches: (Branch & { therapistCount: number })[];
   treatments: (Treatment & { branchPrices: { branchId: string; branchSlug: string; branchName: string; city: string; price: number }[] })[];
+  /** Published review aggregate across the spa's active branches. */
+  rating: { avg: number; count: number } | null;
+  /** Recent published reviews. */
+  reviews: {
+    id: string;
+    guestName: string;
+    rating: number;
+    comment: string | null;
+    createdAt: Date;
+    bookingId: string | null;
+  }[];
+  /** Live promotions for this spa (plus platform-wide offers). */
+  promos: Promotion[];
+  /** Lowest treatment price across branches. */
+  minPrice: number | null;
 };
 
 export async function getSpaDetail(db: AppDb, slug: string): Promise<SpaDetail | null> {
@@ -417,6 +432,7 @@ export async function getSpaDetail(db: AppDb, slug: string): Promise<SpaDetail |
   ]);
 
   const branchById = new Map(branchRows.map((b) => [b.id, b]));
+  const branchIds = branchRows.map((b) => b.id);
 
   const treatmentsWithPrices = treatmentRows
     .map((t) => ({
@@ -431,10 +447,63 @@ export async function getSpaDetail(db: AppDb, slug: string): Promise<SpaDetail |
     }))
     .filter((t) => t.branchPrices.length > 0);
 
+  const [ratingRows, reviewRows, promoRows] = await Promise.all([
+    db
+      .select({ avg: sql<number>`avg(${reviews.rating})`, count: sql<number>`count(*)::int` })
+      .from(reviews)
+      .innerJoin(branches, eq(branches.id, reviews.branchId))
+      .where(and(eq(reviews.status, 'published'), eq(branches.providerId, provider.id))),
+    db
+      .select({
+        id: reviews.id,
+        guestName: reviews.guestName,
+        rating: reviews.rating,
+        comment: reviews.comment,
+        createdAt: reviews.createdAt,
+        bookingId: reviews.bookingId,
+      })
+      .from(reviews)
+      .innerJoin(branches, eq(branches.id, reviews.branchId))
+      .where(and(eq(reviews.status, 'published'), eq(branches.providerId, provider.id)))
+      .orderBy(desc(reviews.createdAt))
+      .limit(6),
+    db.query.promotions.findMany({
+      where: and(
+        eq(promotions.active, true),
+        or(
+          eq(promotions.providerId, provider.id),
+          branchIds.length ? inArray(promotions.branchId, branchIds) : sql`false`,
+          isNull(promotions.providerId),
+        ),
+      ),
+      orderBy: [asc(promotions.sortOrder), desc(promotions.createdAt)],
+      limit: 6,
+    }),
+  ]);
+
+  const ratingRow = ratingRows[0];
+  const rating = ratingRow?.count
+    ? { avg: Math.round(Number(ratingRow.avg) * 10) / 10, count: ratingRow.count }
+    : null;
+
+  const now = Date.now();
+  const promos = promoRows.filter((p) => {
+    if (p.startsAt && p.startsAt.getTime() > now) return false;
+    if (p.endsAt && p.endsAt.getTime() < now) return false;
+    return true;
+  });
+
+  const prices = treatmentsWithPrices.flatMap((t) => t.branchPrices.map((bp) => bp.price));
+  const minPrice = prices.length ? Math.min(...prices) : null;
+
   return {
     provider,
     branches: branchRows.map(({ therapists: th, ...b }) => ({ ...b, therapistCount: th.length })),
     treatments: treatmentsWithPrices,
+    rating,
+    reviews: reviewRows,
+    promos,
+    minPrice,
   };
 }
 

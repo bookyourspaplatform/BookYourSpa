@@ -1,7 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { eq, and, sql } from 'drizzle-orm';
+import { eq, and, ne, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb, type AppDb } from '@/db';
 import {
@@ -11,12 +11,14 @@ import {
   coupons,
   pages,
   promotions,
+  providerClaims,
   providers,
   settings,
+  users,
   TREATMENT_CATEGORIES,
   PROMO_POSITIONS,
 } from '@/db/schema';
-import { requireUser } from '@/lib/auth/session';
+import { findUserByEmail, requireUser } from '@/lib/auth/session';
 import { cancelBooking, BookingError } from '@/lib/booking';
 import { logAudit } from '@/lib/audit';
 import { newId, slugify } from '@/lib/utils';
@@ -53,6 +55,177 @@ export async function setProviderStatus(id: string, status: 'approved' | 'suspen
     return { ok: true };
   } catch {
     return fail('Could not update the provider.');
+  }
+}
+
+/* ------------------ spa business creation + claims ------------------ */
+
+const adminCreateProviderSchema = z.object({
+  name: z.string().trim().min(2, 'Enter the spa business name.').max(120),
+  country: z.enum(['ID', 'AE', 'SG', 'TH', 'MY', 'IN', 'GB', 'US', 'AU']),
+  tagline: z.string().trim().max(160).optional().or(z.literal('')),
+  ownerEmail: z.string().trim().max(200).optional().or(z.literal('')),
+  publish: z.boolean().default(false),
+});
+
+/**
+ * Admin adds a Provider/Spa Business for its owner to claim. The listing stays
+ * hidden (pending) unless published, and unowned until a claim is approved.
+ */
+export async function adminCreateProvider(
+  input: z.infer<typeof adminCreateProviderSchema>,
+): Promise<ActionResult<{ id: string; slug: string; invited: boolean }>> {
+  try {
+    const { user, db } = await adminCtx();
+    const parsed = adminCreateProviderSchema.safeParse(input);
+    if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? 'Invalid spa business data.');
+    const data = parsed.data;
+
+    let slug = slugify(data.name) || 'spa';
+    const dupe = await db.query.providers.findFirst({ where: eq(providers.slug, slug) });
+    if (dupe) slug = `${slug}-${Date.now().toString(36).slice(-4)}`;
+
+    const email = data.ownerEmail ? data.ownerEmail.toLowerCase() : null;
+    if (email && !z.email().safeParse(email).success) return fail('Enter a valid owner email address.');
+    const invitee = email ? await findUserByEmail(email) : null;
+
+    const id = newId('prv');
+    await db.transaction(async (tx) => {
+      await tx.insert(providers).values({
+        id,
+        ownerId: null,
+        name: data.name,
+        slug,
+        country: data.country,
+        baseCurrency: data.country === 'ID' ? 'IDR' : 'AED',
+        tagline: data.tagline || null,
+        email,
+        status: data.publish ? 'approved' : 'pending',
+        approvedAt: data.publish ? new Date() : null,
+      });
+      if (email) {
+        await tx.insert(providerClaims).values({
+          id: newId('clm'),
+          providerId: id,
+          email,
+          userId: invitee?.id ?? null,
+          message: 'Owner invite added by admin',
+        });
+      }
+    });
+
+    await logAudit({
+      actorId: user.id,
+      actorRole: user.role,
+      action: 'admin.provider_created',
+      entity: 'provider',
+      entityId: id,
+      meta: { slug, publish: data.publish, invited: Boolean(email) },
+    });
+    revalidateAdmin();
+    revalidatePath('/spas');
+    revalidatePath(`/spas/${slug}`);
+    return { ok: true, data: { id, slug, invited: Boolean(email) } };
+  } catch {
+    return fail('Could not create the spa business.');
+  }
+}
+
+export async function approveProviderClaim(claimId: string): Promise<ActionResult> {
+  try {
+    const { user, db } = await adminCtx();
+    const claim = await db.query.providerClaims.findFirst({
+      where: eq(providerClaims.id, claimId),
+      with: { provider: true },
+    });
+    if (!claim) return fail('Claim not found.');
+    if (claim.status !== 'pending') return fail('This claim was already decided.');
+    const ownerId = claim.userId;
+    if (!ownerId) return fail('The claimant has not confirmed yet — ask them to sign in with the invited email.');
+    if (claim.provider.ownerId && claim.provider.ownerId !== ownerId) {
+      return fail('This spa already has a different owner.');
+    }
+    const owner = await db.query.users.findFirst({ where: eq(users.id, ownerId) });
+    if (!owner || owner.status !== 'active') return fail('The claimant account is not active.');
+
+    const publish = claim.provider.status === 'pending';
+    await db.transaction(async (tx) => {
+      await tx
+        .update(providerClaims)
+        .set({ status: 'approved', decidedAt: new Date(), decidedBy: user.id })
+        .where(eq(providerClaims.id, claimId));
+      await tx
+        .update(providers)
+        .set({
+          ownerId,
+          ...(publish ? { status: 'approved' as const, approvedAt: claim.provider.approvedAt ?? new Date() } : {}),
+        })
+        .where(eq(providers.id, claim.providerId));
+      // No second owner can be approved later.
+      await tx
+        .update(providerClaims)
+        .set({ status: 'rejected', decidedAt: new Date(), decidedBy: user.id })
+        .where(
+          and(
+            eq(providerClaims.providerId, claim.providerId),
+            eq(providerClaims.status, 'pending'),
+            ne(providerClaims.id, claimId),
+          ),
+        );
+      // Owners run the spa console — promote customer accounts on approval.
+      await tx
+        .update(users)
+        .set({ role: 'provider' })
+        .where(and(eq(users.id, ownerId), eq(users.role, 'customer')));
+    });
+
+    await logAudit({
+      actorId: user.id,
+      actorRole: user.role,
+      action: 'admin.claim_approved',
+      entity: 'provider',
+      entityId: claim.providerId,
+      meta: { claimId, ownerId },
+    });
+    revalidateAdmin();
+    revalidatePath(`/spas/${claim.provider.slug}`);
+    revalidatePath('/provider');
+    revalidatePath('/account');
+    return { ok: true };
+  } catch {
+    return fail('Could not approve the claim.');
+  }
+}
+
+export async function rejectProviderClaim(claimId: string): Promise<ActionResult> {
+  try {
+    const { user, db } = await adminCtx();
+    const claim = await db.query.providerClaims.findFirst({
+      where: eq(providerClaims.id, claimId),
+      with: { provider: { columns: { slug: true } } },
+    });
+    if (!claim) return fail('Claim not found.');
+    if (claim.status !== 'pending') return fail('This claim was already decided.');
+
+    await db
+      .update(providerClaims)
+      .set({ status: 'rejected', decidedAt: new Date(), decidedBy: user.id })
+      .where(eq(providerClaims.id, claimId));
+    await logAudit({
+      actorId: user.id,
+      actorRole: user.role,
+      action: 'admin.claim_rejected',
+      entity: 'provider',
+      entityId: claim.providerId,
+      meta: { claimId },
+    });
+    revalidateAdmin();
+    revalidatePath(`/spas/${claim.provider.slug}`);
+    revalidatePath('/account');
+    revalidatePath('/provider');
+    return { ok: true };
+  } catch {
+    return fail('Could not reject the claim.');
   }
 }
 

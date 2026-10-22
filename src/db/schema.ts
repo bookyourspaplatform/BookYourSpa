@@ -201,9 +201,8 @@ export const providers = pgTable(
   'providers',
   {
     id: text('id').primaryKey(), // prv_xxxxxxxx
-    ownerId: text('owner_id')
-      .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
+    /** Owning account — null while a listing is unclaimed (added by admin, awaiting owner claim). */
+    ownerId: text('owner_id').references(() => users.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
     slug: text('slug').notNull().unique(),
     tagline: text('tagline'),
@@ -237,6 +236,46 @@ export const providersRelations = relations(providers, ({ one, many }) => ({
   owner: one(users, { fields: [providers.ownerId], references: [users.id] }),
   branches: many(branches),
   treatments: many(treatments),
+}));
+
+/* ------------------------------------------------------------------ */
+/* Provider claims — an owner takes over a listing added by admin       */
+/* ------------------------------------------------------------------ */
+
+export const CLAIM_STATUSES = ['pending', 'approved', 'rejected'] as const;
+export type ClaimStatus = (typeof CLAIM_STATUSES)[number];
+
+export const providerClaims = pgTable(
+  'provider_claims',
+  {
+    id: text('id').primaryKey(), // clm_xxxxxxxx
+    providerId: text('provider_id')
+      .notNull()
+      .references(() => providers.id, { onDelete: 'cascade' }),
+    /** Claimant email — may exist before they create an account (admin invite). */
+    email: text('email').notNull(),
+    /** Filled when the invited email confirms from a signed-in session, or right away for public claims. */
+    userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
+    message: text('message'),
+    status: text('status', { enum: CLAIM_STATUSES }).notNull().default('pending'),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    decidedBy: text('decided_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    index('provider_claims_provider_idx').on(t.providerId),
+    index('provider_claims_status_idx').on(t.status),
+    index('provider_claims_email_idx').on(t.email),
+  ],
+);
+
+export const providerClaimsRelations = relations(providerClaims, ({ one }) => ({
+  provider: one(providers, { fields: [providerClaims.providerId], references: [providers.id] }),
+  user: one(users, { fields: [providerClaims.userId], references: [users.id] }),
 }));
 
 /* ------------------------------------------------------------------ */
