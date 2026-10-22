@@ -183,25 +183,40 @@ export default async function SpaDetailPage({ params }: { params: Promise<{ slug
   const countryName = COUNTRY_NAMES[spa.provider.country] ?? spa.provider.country;
   const locationText = cities.length ? `${[...new Set(cities)].join(', ')}, ${countryName}` : countryName;
 
-  const descriptionText = spa.provider.description?.trim() || null;
+  /* ---------- Spa Business (branch) sourced copy ----------
+     The provider row is only the tenant; everything publicly shown comes from
+     the spa businesses (outlets) exactly as the supplier console lists them. */
+  const descriptionText = (main?.description?.trim() || spa.provider.description?.trim() || '') || null;
+  const tagline = spa.provider.tagline ?? main?.tagline ?? null;
   const intro =
     main?.shortDescription ??
     (descriptionText ? `${stripHtml(descriptionText).slice(0, 200).trimEnd()}…` : null);
+  const facilities = [...new Set(spa.branches.flatMap((b) => b.facilities))];
 
-  /* ---------- hours ---------- */
-  const tz = main?.timezone ?? 'Asia/Makassar';
-  const todayKey = dateKeyInTz(new Date(), tz);
-  const todayIdx = new Date(`${todayKey}T12:00:00Z`).getUTCDay();
-  const hours = main?.hours ?? [];
-  const hourRows = DAY_LABELS.map((label, day) => {
-    const h = hours.find((x) => x.day === day);
-    const open = Boolean(h && !h.closed);
-    return { label, day, open, text: open ? `${h!.open} – ${h!.close}` : 'Closed', today: day === todayIdx };
+  /* ---------- hours (per spa business) ---------- */
+  const branchHours = spa.branches.map((b) => {
+    const todayKey = dateKeyInTz(new Date(), b.timezone);
+    const todayIdx = new Date(`${todayKey}T12:00:00Z`).getUTCDay();
+    return {
+      name: b.name,
+      timezone: b.timezone,
+      rows: DAY_LABELS.map((label, day) => {
+        const h = b.hours.find((x) => x.day === day);
+        const open = Boolean(h && !h.closed);
+        return {
+          label,
+          day,
+          open,
+          text: open ? `${h!.open} – ${h!.close}` : 'Closed',
+          today: day === todayIdx,
+        };
+      }),
+    };
   });
 
   const cancelHours = settings['booking.cancellationHours'];
   const supportEmail = settings['site.supportEmail'];
-  const paymentText = (main?.paymentMethods ?? [])
+  const paymentText = [...new Set(spa.branches.flatMap((b) => b.paymentMethods))]
     .map((m) => PAYMENT_LABELS[m] ?? m)
     .join(', ');
 
@@ -212,14 +227,6 @@ export default async function SpaDetailPage({ params }: { params: Promise<{ slug
   const mapSrc = hasCoords
     ? `https://www.openstreetmap.org/export/embed.html?bbox=${(lng! - 0.007).toFixed(4)}%2C${(lat! - 0.007).toFixed(4)}%2C${(lng! + 0.007).toFixed(4)}%2C${(lat! + 0.007).toFixed(4)}&layer=mapnik&marker=${lat}%2C${lng}`
     : null;
-  const mapsHref =
-    main?.googleMapsUrl ??
-    (hasCoords
-      ? `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`
-      : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-          [main?.addressLine, main?.city, main?.country].filter(Boolean).join(', '),
-        )}`);
-
   /* ---------- claim + related ---------- */
   const claimState: ClaimSpaState | null = spa.provider.ownerId
     ? null
@@ -312,8 +319,8 @@ export default async function SpaDetailPage({ params }: { params: Promise<{ slug
               <h1 className="mt-2 text-4xl font-bold leading-[1.06] tracking-tight text-ink-900 sm:text-5xl">
                 {spa.provider.name}
               </h1>
-              {spa.provider.tagline && (
-                <p className="mt-2 text-[17px] font-semibold text-ink-800">{spa.provider.tagline}</p>
+              {tagline && (
+                <p className="mt-2 text-[17px] font-semibold text-ink-800">{tagline}</p>
               )}
               {intro && (
                 <p className="mt-1.5 max-w-3xl text-[15px] leading-relaxed text-ink-600">{intro}</p>
@@ -357,6 +364,75 @@ export default async function SpaDetailPage({ params }: { params: Promise<{ slug
               </div>
             </header>
 
+            {/* Spa Businesses (outlets) — mirrors the supplier console listing */}
+            <section aria-labelledby="business-heading">
+              <HighlightHeading id="business-heading">Spa Business</HighlightHeading>
+              <p className="mt-2 text-[13.5px] text-ink-500">
+                {spa.branches.length} location{spa.branches.length === 1 ? '' : 's'} · each
+                business owns its own hours, prices and team.
+              </p>
+              <div className="mt-4 space-y-4">
+                {spa.branches.map((b) => (
+                  <article
+                    key={b.id}
+                    className="rounded-3xl border border-ink-100 bg-white p-5 transition hover:border-brand-200 hover:shadow-sm"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Link
+                        href={`/spas/${slug}/${b.slug}`}
+                        className="text-[17px] font-semibold text-ink-900 hover:text-brand-700"
+                      >
+                        {b.name}
+                      </Link>
+                      {b.status === 'active' ? (
+                        <Badge tone="success">active</Badge>
+                      ) : (
+                        <Badge tone="neutral">{b.status}</Badge>
+                      )}
+                      {b.doorstepService && <Badge tone="clay">Doorstep</Badge>}
+                    </div>
+                    <p className="mt-1.5 flex items-start gap-1.5 text-[13.5px] text-ink-600">
+                      <MapPin className="mt-0.5 size-3.5 shrink-0 text-clay-500" />
+                      {b.addressLine}, {b.city}, {b.country} · {b.timezone} · {b.currency}
+                    </p>
+                    <p className="mt-1 text-[13px] text-ink-400">
+                      {b.treatmentCount} treatment{b.treatmentCount === 1 ? '' : 's'} ·{' '}
+                      {b.therapistCount} therapist{b.therapistCount === 1 ? '' : 's'}
+                      {b.paymentMethods.length > 0 &&
+                        ` · ${b.paymentMethods.map((m) => PAYMENT_LABELS[m] ?? m).join(', ')}`}
+                    </p>
+                    <div className="mt-2.5 flex flex-wrap gap-1.5">
+                      {DAY_LABELS.map((label, day) => {
+                        const h = b.hours.find((x) => x.day === day);
+                        const open = Boolean(h && !h.closed);
+                        return (
+                          <span
+                            key={label}
+                            className={`rounded-full px-2.5 py-1 text-[12px] tabular-nums ${
+                              open ? 'bg-brand-50 text-brand-700' : 'bg-sand-100 text-ink-400'
+                            }`}
+                          >
+                            {label} {open ? `${h!.open}–${h!.close}` : 'Closed'}
+                          </span>
+                        );
+                      })}
+                    </div>
+                    <Link
+                      href={`/spas/${slug}/${b.slug}`}
+                      className="mt-3.5 inline-flex h-9 items-center justify-center rounded-full border border-ink-200 bg-white px-4 text-[13px] font-medium text-ink-700 transition hover:border-brand-300 hover:text-brand-700"
+                    >
+                      View spa business →
+                    </Link>
+                  </article>
+                ))}
+                {spa.branches.length === 0 && (
+                  <p className="rounded-3xl border border-dashed border-ink-200 bg-white p-8 text-center text-sm text-ink-500">
+                    Locations coming soon.
+                  </p>
+                )}
+              </div>
+            </section>
+
             {/* Offers */}
             {spa.promos.length > 0 && (
               <section
@@ -384,7 +460,7 @@ export default async function SpaDetailPage({ params }: { params: Promise<{ slug
             )}
 
             {/* About */}
-            {(descriptionText || (main && main.facilities.length > 0)) && (
+            {(descriptionText || facilities.length > 0) && (
               <section aria-labelledby="about-heading">
                 <HighlightHeading id="about-heading">About {spa.provider.name}</HighlightHeading>
                 {descriptionText && (
@@ -394,9 +470,9 @@ export default async function SpaDetailPage({ params }: { params: Promise<{ slug
                     ))}
                   </div>
                 )}
-                {main && main.facilities.length > 0 && (
+                {facilities.length > 0 && (
                   <div className="mt-4 flex flex-wrap gap-2">
-                    {main.facilities.map((f) => (
+                    {facilities.map((f) => (
                       <span
                         key={f}
                         className="rounded-full border border-ink-200 bg-white px-3 py-1 text-[12.5px] text-ink-600"
@@ -411,35 +487,47 @@ export default async function SpaDetailPage({ params }: { params: Promise<{ slug
 
             {/* Opening hours + Good to know */}
             <div className="grid gap-8 sm:grid-cols-2">
-              {main && (
-                <section aria-labelledby="hours-heading">
+              {branchHours.length > 0 && (
+                <section
+                  aria-labelledby="hours-heading"
+                  className={branchHours.length > 1 ? 'sm:col-span-2' : ''}
+                >
                   <h2 id="hours-heading" className="text-xl font-semibold text-ink-900">
                     Opening hours
                   </h2>
-                  <ul className="mt-3 text-[13.5px]">
-                    {hourRows.map((r) => (
-                      <li key={r.label} className="flex items-center justify-between py-1.5">
-                        <span className={r.today ? 'font-semibold text-ink-800' : 'text-ink-600'}>
-                          {r.label}
-                          {r.today && <span className="font-normal text-ink-400"> · today</span>}
-                        </span>
-                        <span
-                          className={`tabular-nums ${
-                            r.open
-                              ? r.today
-                                ? 'font-semibold text-ink-800'
-                                : 'text-ink-600'
-                              : 'text-ink-400'
-                          }`}
-                        >
-                          {r.text}
-                        </span>
-                      </li>
+                  <div className={`mt-3 ${branchHours.length > 1 ? 'grid gap-5 sm:grid-cols-2' : ''}`}>
+                    {branchHours.map((bh) => (
+                      <div key={bh.name}>
+                        {branchHours.length > 1 && (
+                          <p className="text-[13px] font-semibold text-ink-700">{bh.name}</p>
+                        )}
+                        <ul className="mt-1 text-[13.5px]">
+                          {bh.rows.map((r) => (
+                            <li key={r.label} className="flex items-center justify-between py-1.5">
+                              <span className={r.today ? 'font-semibold text-ink-800' : 'text-ink-600'}>
+                                {r.label}
+                                {r.today && <span className="font-normal text-ink-400"> · today</span>}
+                              </span>
+                              <span
+                                className={`tabular-nums ${
+                                  r.open
+                                    ? r.today
+                                      ? 'font-semibold text-ink-800'
+                                      : 'text-ink-600'
+                                    : 'text-ink-400'
+                                }`}
+                              >
+                                {r.text}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                        <p className="mt-1 text-[12.5px] text-ink-400">
+                          Branch-local time ({bh.timezone})
+                        </p>
+                      </div>
                     ))}
-                  </ul>
-                  <p className="mt-2 text-[12.5px] text-ink-400">
-                    Branch-local time{spa.branches.length > 1 ? ` · ${main.name}` : ''}
-                  </p>
+                  </div>
                 </section>
               )}
 
@@ -615,16 +703,49 @@ export default async function SpaDetailPage({ params }: { params: Promise<{ slug
               </div>
             )}
 
-            {/* Location */}
+            {/* Location — every spa business (outlet) */}
             <div className="rounded-3xl border border-ink-100 bg-white p-5">
               <h3 className="text-[15px] font-semibold text-ink-900">Location</h3>
-              {main ? (
+              {spa.branches.length > 0 ? (
                 <>
-                  <p className="mt-2 text-[13.5px] leading-relaxed text-ink-600">
-                    {main.addressLine}
-                    <br />
-                    {[main.city, main.region, main.country].filter(Boolean).join(', ')}
-                  </p>
+                  <div className="mt-3 space-y-3">
+                    {spa.branches.map((b, i) => {
+                      const bLat = b.lat ? Number(b.lat) : null;
+                      const bLng = b.lng ? Number(b.lng) : null;
+                      const bHasCoords =
+                        bLat !== null && bLng !== null && Number.isFinite(bLat) && Number.isFinite(bLng);
+                      const bMapsHref =
+                        b.googleMapsUrl ??
+                        (bHasCoords
+                          ? `https://www.google.com/maps/search/?api=1&query=${bLat},${bLng}`
+                          : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                              [b.addressLine, b.city, b.country].filter(Boolean).join(', '),
+                            )}`);
+                      return (
+                        <div key={b.id} className={i === 0 ? '' : 'border-t border-ink-100 pt-3'}>
+                          <Link
+                            href={`/spas/${slug}/${b.slug}`}
+                            className="text-[14px] font-medium text-ink-800 hover:text-brand-700"
+                          >
+                            {b.name}
+                          </Link>
+                          <p className="mt-1 text-[13.5px] leading-relaxed text-ink-600">
+                            {b.addressLine}
+                            <br />
+                            {[b.city, b.region, b.country].filter(Boolean).join(', ')}
+                          </p>
+                          <a
+                            href={bMapsHref}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="mt-1.5 inline-flex items-center gap-1.5 text-[12.5px] font-medium text-brand-700 hover:underline"
+                          >
+                            <MapPin className="size-3.5" /> Open in Google Maps
+                          </a>
+                        </div>
+                      );
+                    })}
+                  </div>
                   {mapSrc && (
                     <div className="mt-3 overflow-hidden rounded-2xl border border-ink-100">
                       <iframe
@@ -634,28 +755,6 @@ export default async function SpaDetailPage({ params }: { params: Promise<{ slug
                         className="h-44 w-full border-0"
                       />
                     </div>
-                  )}
-                  <a
-                    href={mapsHref}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mt-2.5 inline-flex items-center gap-1.5 text-[13px] font-medium text-brand-700 hover:underline"
-                  >
-                    <MapPin className="size-3.5" /> Open in Google Maps
-                  </a>
-                  {spa.branches.length > 1 && (
-                    <ul className="mt-3 space-y-1.5 border-t border-ink-100 pt-3">
-                      {spa.branches.map((b) => (
-                        <li key={b.id}>
-                          <Link
-                            href={`/spas/${slug}/${b.slug}`}
-                            className="text-[13px] text-brand-700 hover:underline"
-                          >
-                            {b.name} — {b.city}
-                          </Link>
-                        </li>
-                      ))}
-                    </ul>
                   )}
                 </>
               ) : (

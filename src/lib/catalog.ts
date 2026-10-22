@@ -395,7 +395,8 @@ export async function listSpas(db: AppDb, filters: SpaFilters = {}) {
 
 export type SpaDetail = {
   provider: Provider;
-  branches: (Branch & { therapistCount: number })[];
+  /** The spa businesses (outlets) as listed in the supplier console — the public page is built from these. */
+  branches: (Branch & { therapistCount: number; treatmentCount: number })[];
   treatments: (Treatment & { branchPrices: { branchId: string; branchSlug: string; branchName: string; city: string; price: number }[] })[];
   /** Published review aggregate across the spa's active branches. */
   rating: { avg: number; count: number } | null;
@@ -433,6 +434,15 @@ export async function getSpaDetail(db: AppDb, slug: string): Promise<SpaDetail |
 
   const branchById = new Map(branchRows.map((b) => [b.id, b]));
   const branchIds = branchRows.map((b) => b.id);
+
+  // Active treatments offered per spa business (outlet).
+  const treatmentCountByBranch = new Map<string, number>();
+  for (const t of treatmentRows) {
+    for (const bt of t.branchTreatments) {
+      if (!branchById.has(bt.branchId)) continue;
+      treatmentCountByBranch.set(bt.branchId, (treatmentCountByBranch.get(bt.branchId) ?? 0) + 1);
+    }
+  }
 
   const treatmentsWithPrices = treatmentRows
     .map((t) => ({
@@ -498,7 +508,11 @@ export async function getSpaDetail(db: AppDb, slug: string): Promise<SpaDetail |
 
   return {
     provider,
-    branches: branchRows.map(({ therapists: th, ...b }) => ({ ...b, therapistCount: th.length })),
+    branches: branchRows.map(({ therapists: th, ...b }) => ({
+      ...b,
+      therapistCount: th.length,
+      treatmentCount: treatmentCountByBranch.get(b.id) ?? 0,
+    })),
     treatments: treatmentsWithPrices,
     rating,
     reviews: reviewRows,
