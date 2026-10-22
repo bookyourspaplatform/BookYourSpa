@@ -60,13 +60,14 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* NOTE: no `color` here — unlayered element rules would beat Tailwind
+   utilities (text-white etc.) in v4. Text color inherits from body. */
 h1,
 h2,
 h3 {
   font-family: var(--font-display);
   font-weight: 500;
   letter-spacing: -0.015em;
-  color: var(--color-ink-900);
 }
 
 :focus-visible {

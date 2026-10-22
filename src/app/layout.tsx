@@ -3,6 +3,8 @@ import { DM_Sans, Fraunces } from 'next/font/google';
 import './globals.css';
 import { ToastProvider } from '@/components/ui/toast';
 import { getSettings } from '@/lib/settings';
+import { dirOf } from '@/lib/i18n';
+import { getLang } from '@/lib/lang-cookie';
 
 const bodyFont = DM_Sans({
   subsets: ['latin'],
@@ -54,9 +56,12 @@ export const viewport: Viewport = {
   themeColor: '#20524c',
 };
 
-export default function RootLayout({ children }: LayoutProps<'/'>) {
+export default async function RootLayout({ children }: LayoutProps<'/'>) {
+  // Interface language + direction come from the cookie the header switcher sets,
+  // so translated chrome and RTL (Arabic) apply to the whole document.
+  const lang = await getLang();
   return (
-    <html lang="en" className={`${bodyFont.variable} ${displayFont.variable} h-full`}>
+    <html lang={lang} dir={dirOf(lang)} className={`${bodyFont.variable} ${displayFont.variable} h-full`}>
       <body className="min-h-full flex flex-col">
         <ToastProvider>{children}</ToastProvider>
       </body>

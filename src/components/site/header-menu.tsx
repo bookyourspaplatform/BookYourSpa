@@ -18,9 +18,14 @@ export function HeaderMenu({ user }: { user: { name: string; role: Role; email: 
   const [open, setOpen] = useState(false);
 
   const nav = [
-    { href: '/spas', label: 'Find a spa' },
-    { href: '/compare', label: 'Compare treatments' },
+    { href: '/spas', label: 'Explore Spas' },
+    { href: '/spas?near=me', label: 'Spa Near Me' },
+    { href: '/#destinations', label: 'Destinations' },
+    { href: '/#categories', label: 'Treatments' },
+    { href: '/spas?sort=rating', label: 'Top Rated' },
     { href: '/deals', label: 'Deals' },
+    { href: '/spas?spa=doorstep_spa', label: 'Doorstep Spa' },
+    { href: '/compare', label: 'Compare treatments' },
     { href: '/about', label: 'About' },
     { href: '/contact', label: 'Contact' },
   ];

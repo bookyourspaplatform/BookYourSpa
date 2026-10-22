@@ -5,6 +5,7 @@ import {
   branchTreatments,
   promotions,
   providers,
+  reviews,
   therapists,
   treatments,
   coupons,
@@ -32,7 +33,11 @@ export type SpaListItem = {
   featured: boolean;
   branchCount: number;
   cities: string[];
-  branches: Pick<Branch, 'id' | 'name' | 'slug' | 'city' | 'country' | 'currency'>[];
+  branches: Pick<Branch, 'id' | 'name' | 'slug' | 'city' | 'country' | 'currency' | 'lat' | 'lng'>[];
+  /** Published review average across all branches (null when unrated). */
+  rating: { avg: number; count: number } | null;
+  /** Kilometres to the nearest branch — only set when `near` filtering was used. */
+  distanceKm: number | null;
   minPrice: number | null;
   /** Treatment categories aggregated across branches (legacy chips). */
   categories: string[];
@@ -54,10 +59,24 @@ export type SpaFilters = {
   type?: string;
   minPrice?: number;
   maxPrice?: number;
-  sort?: 'featured' | 'price_asc' | 'price_desc' | 'name';
+  /** Guest location — enables distance sorting/filtering for "Spa near me". */
+  near?: { lat: number; lng: number };
+  /** Only spas whose nearest branch is within this many km of `near`. */
+  radiusKm?: number;
+  sort?: 'featured' | 'price_asc' | 'price_desc' | 'name' | 'rating' | 'distance';
   page?: number;
   pageSize?: number;
 };
+
+/** Great-circle distance in kilometres. */
+export function haversineKm(aLat: number, aLng: number, bLat: number, bLng: number): number {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(bLat - aLat);
+  const dLng = toRad(bLng - aLng);
+  const h =
+    Math.sin(dLat / 2) ** 2 + Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * 6371 * Math.asin(Math.min(1, Math.sqrt(h)));
+}
 
 export const CATEGORY_LABELS: Record<string, string> = {
   massage: 'Massage',
@@ -146,52 +165,72 @@ type ProviderRow = Provider & {
     | 'categories'
     | 'spaTypes'
     | 'images'
+    | 'lat'
+    | 'lng'
   >[];
 };
 
 export async function listSpas(db: AppDb, filters: SpaFilters = {}) {
   const providerRows = (await db.query.providers.findMany({
-    where: activeCatalog,
-    with: {
-      branches: {
-        columns: {
-          id: true,
-          name: true,
-          slug: true,
-          city: true,
-          country: true,
-          currency: true,
-          status: true,
-          tagline: true,
-          shortDescription: true,
-          categories: true,
-          spaTypes: true,
-          images: true,
+    where: activeCatalog,        with: {
+          branches: {
+            columns: {
+              id: true,
+              name: true,
+              slug: true,
+              city: true,
+              country: true,
+              currency: true,
+              status: true,
+              tagline: true,
+              shortDescription: true,
+              categories: true,
+              spaTypes: true,
+              images: true,
+              lat: true,
+              lng: true,
+            },
+            where: eq(branches.status, 'active'),
+          },
         },
-        where: eq(branches.status, 'active'),
-      },
-    },
-  })) as ProviderRow[];
+      })) as ProviderRow[];
 
-  const aggRows = await db
-    .select({
-      providerId: branches.providerId,
-      minPrice: sql<number | null>`min(${branchTreatments.price})`,
-      maxPrice: sql<number | null>`max(${branchTreatments.price})`,
-      cats: sql<string>`array_to_string(array_agg(distinct ${treatments.category}), ',')`,
-      treatmentCount: sql<number>`count(*)::int`,
-    })
-    .from(branchTreatments)
-    .innerJoin(treatments, eq(treatments.id, branchTreatments.treatmentId))
-    .innerJoin(branches, eq(branches.id, branchTreatments.branchId))
-    .where(
-      and(
-        eq(branchTreatments.active, true),
-        eq(treatments.status, 'active'),
-        eq(branches.status, 'active'),
-      ),
-    )
-    .groupBy(branches.providerId);
+  const [aggRows, ratingRows] = await Promise.all([
+    db
+      .select({
+        providerId: branches.providerId,
+        minPrice: sql<number | null>`min(${branchTreatments.price})`,
+        maxPrice: sql<number | null>`max(${branchTreatments.price})`,
+        cats: sql<string>`array_to_string(array_agg(distinct ${treatments.category}), ',')`,
+        treatmentCount: sql<number>`count(*)::int`,
+      })
+      .from(branchTreatments)
+      .innerJoin(treatments, eq(treatments.id, branchTreatments.treatmentId))
+      .innerJoin(branches, eq(branches.id, branchTreatments.branchId))
+      .where(
+        and(
+          eq(branchTreatments.active, true),
+          eq(treatments.status, 'active'),
+          eq(branches.status, 'active'),
+        ),
+      )
+      .groupBy(branches.providerId),
+    // Published reviews per provider (via its branches) power the star ratings.
+    db
+      .select({
+        providerId: branches.providerId,
+        avg: sql<number>`avg(${reviews.rating})`,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(reviews)
+      .innerJoin(branches, eq(branches.id, reviews.branchId))
+      .where(and(eq(reviews.status, 'published'), eq(branches.status, 'active')))
+      .groupBy(branches.providerId),
+  ]);
+
+  const ratingByProvider = new Map<string, { avg: number; count: number }>(
+    ratingRows.map((r) => [r.providerId, { avg: Math.round(Number(r.avg) * 10) / 10, count: r.count }]),
+  );
 
   const aggByProvider = new Map<string, {
     minPrice: number | null;
@@ -212,6 +251,7 @@ export async function listSpas(db: AppDb, filters: SpaFilters = {}) {
 
   let items: SpaListItem[] = providerRows.map((p) => {
     const agg = aggByProvider.get(p.id);
+    const rating = ratingByProvider.get(p.id) ?? null;
     const cities = [...new Set(p.branches.map((b) => b.city))];
     const spaCategories = [...new Set(p.branches.flatMap((b) => b.categories ?? []))];
     const spaTypes = [...new Set(p.branches.flatMap((b) => b.spaTypes ?? []))];
@@ -231,6 +271,8 @@ export async function listSpas(db: AppDb, filters: SpaFilters = {}) {
       branchCount: p.branches.length,
       cities,
       branches: p.branches,
+      rating,
+      distanceKm: null,
       minPrice: agg?.minPrice ?? null,
       categories: agg?.categories ?? [],
       spaCategories,
@@ -285,11 +327,30 @@ export async function listSpas(db: AppDb, filters: SpaFilters = {}) {
   if (typeof filters.minPrice === 'number') items = items.filter((i) => (i.minPrice ?? Infinity) >= filters.minPrice!);
   if (typeof filters.maxPrice === 'number') items = items.filter((i) => (i.minPrice ?? 0) <= filters.maxPrice!);
 
-  const sort = filters.sort ?? 'featured';
+  // "Spa near me": attach distance to the nearest branch, then filter by radius.
+  if (filters.near) {
+    const { lat, lng } = filters.near;
+    items = items
+      .map((i) => {
+        const distances = i.branches
+          .filter((b) => b.lat != null && b.lng != null)
+          .map((b) => haversineKm(lat, lng, Number(b.lat), Number(b.lng)));
+        const nearest = distances.length ? Math.min(...distances) : null;
+        return { ...i, distanceKm: nearest === null ? null : Math.round(nearest * 10) / 10 };
+      })
+      .filter((i) => i.distanceKm !== null)
+      .filter((i) => (typeof filters.radiusKm === 'number' ? i.distanceKm! <= filters.radiusKm! : true));
+  }
+
+  const sort = filters.sort ?? (filters.near ? 'distance' : 'featured');
   items.sort((a, b) => {
     if (sort === 'name') return a.name.localeCompare(b.name);
     if (sort === 'price_asc') return (a.minPrice ?? Number.MAX_SAFE_INTEGER) - (b.minPrice ?? Number.MAX_SAFE_INTEGER);
     if (sort === 'price_desc') return (b.minPrice ?? 0) - (a.minPrice ?? 0);
+    if (sort === 'rating')
+      return (b.rating?.avg ?? 0) - (a.rating?.avg ?? 0) || (b.rating?.count ?? 0) - (a.rating?.count ?? 0);
+    if (sort === 'distance')
+      return (a.distanceKm ?? Number.MAX_SAFE_INTEGER) - (b.distanceKm ?? Number.MAX_SAFE_INTEGER);
     return Number(b.featured) - Number(a.featured) || a.name.localeCompare(b.name);
   });
 
@@ -528,6 +589,97 @@ export async function listPublicCoupons(db: AppDb): Promise<(typeof coupons.$inf
     limit: 12,
   });
   return rows;
+}
+
+/* --------------------- featured treatments (home) -------------------- */
+
+export type FeaturedTreatment = {
+  id: string;
+  name: string;
+  category: string;
+  durationMin: number;
+  providerName: string;
+  providerSlug: string;
+  branchName: string;
+  branchSlug: string;
+  city: string;
+  price: number;
+  currency: string;
+};
+
+/**
+ * Hand-picked treatments for the landing page: cheapest active branch price
+ * per treatment, spread across distinct categories so the row isn't all massage.
+ */
+export async function listFeaturedTreatments(
+  db: AppDb,
+  opts: { limit?: number } = {},
+): Promise<FeaturedTreatment[]> {
+  const rows = await db
+    .select({
+      treatment: treatments,
+      providerName: providers.name,
+      providerSlug: providers.slug,
+      branchName: branches.name,
+      branchSlug: branches.slug,
+      city: branches.city,
+      price: branchTreatments.price,
+    })
+    .from(branchTreatments)
+    .innerJoin(treatments, eq(treatments.id, branchTreatments.treatmentId))
+    .innerJoin(branches, eq(branches.id, branchTreatments.branchId))
+    .innerJoin(providers, eq(providers.id, branches.providerId))
+    .where(
+      and(
+        eq(branchTreatments.active, true),
+        eq(treatments.status, 'active'),
+        eq(branches.status, 'active'),
+        eq(providers.status, 'approved'),
+      ),
+    )
+    .orderBy(asc(treatments.name), asc(branches.name), asc(branchTreatments.price))
+    .limit(400);
+
+  // Cheapest offer per treatment.
+  const cheapest = new Map<string, FeaturedTreatment>();
+  for (const r of rows) {
+    if (cheapest.has(r.treatment.id)) continue;
+    cheapest.set(r.treatment.id, {
+      id: r.treatment.id,
+      name: r.treatment.name,
+      category: r.treatment.category,
+      durationMin: r.treatment.durationMin,
+      providerName: r.providerName,
+      providerSlug: r.providerSlug,
+      branchName: r.branchName,
+      branchSlug: r.branchSlug,
+      city: r.city,
+      price: r.price,
+      currency: r.treatment.currency,
+    });
+  }
+
+  // Spread across categories: take the cheapest of each category in turn.
+  const limit = opts.limit ?? 8;
+  const byCategory = new Map<string, FeaturedTreatment[]>();
+  for (const item of [...cheapest.values()].sort((a, b) => a.price - b.price)) {
+    const bucket = byCategory.get(item.category);
+    if (bucket) bucket.push(item);
+    else byCategory.set(item.category, [item]);
+  }
+  const out: FeaturedTreatment[] = [];
+  while (out.length < limit) {
+    let added = false;
+    for (const bucket of byCategory.values()) {
+      const next = bucket.shift();
+      if (next && out.length < limit) {
+        out.push(next);
+        added = true;
+      }
+    }
+    if (!added) break;
+  }
+  return out;
 }
 
 /* ------------------------ compare (treatments) ------------------------ */

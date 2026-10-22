@@ -7,6 +7,7 @@ import { pageMetadata, breadcrumbJsonLd, searchResultsJsonLd, appUrl } from '@/l
 import { JsonLd } from '@/components/json-ld';
 import { SpaCard } from '@/components/site/spa-card';
 import { SortSelect } from '@/components/site/sort-select';
+import { NearMeButton } from '@/components/site/near-me-button';
 import { EmptyState } from '@/components/ui/spinner';
 import { buttonClasses } from '@/components/ui/button';
 import { inputCls } from '@/components/ui/classes';
@@ -23,7 +24,19 @@ type Search = {
   sort?: string;
   page?: string;
   maxPrice?: string;
+  /** Guest coordinates as `lat,lng` — enables "Spa near me" distance sorting. */
+  near?: string;
+  radius?: string;
 };
+
+/** Parse `near=lat,lng` into coordinates, or null when absent/malformed. */
+function parseNear(v?: string): { lat: number; lng: number } | undefined {
+  if (!v) return undefined;
+  const [lat, lng] = v.split(',').map(Number);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return undefined;
+  if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return undefined;
+  return { lat, lng };
+}
 
 function buildHref(base: string, params: Record<string, string | undefined>) {
   const search = new URLSearchParams();
@@ -57,19 +70,28 @@ export default async function SpasPage({ searchParams }: { searchParams: Promise
   const sp = await searchParams;
   const db = await getDb();
 
+  const near = parseNear(sp.near);
+  const radiusKm = sp.radius ? Number(sp.radius) : undefined;
+
   const results = await listSpas(db, {
     q: sp.q,
     city: sp.city,
     category: sp.category,
     spa: sp.spa,
     type: sp.type,
-    sort: (sp.sort as 'featured' | 'price_asc' | 'price_desc' | 'name') ?? 'featured',
+    near,
+    radiusKm: Number.isFinite(radiusKm as number) ? radiusKm : undefined,
+    // Near-me searches default to distance order unless the visitor picked one.
+    sort:
+      (sp.sort as 'featured' | 'price_asc' | 'price_desc' | 'name' | 'rating' | 'distance') ??
+      (near ? 'distance' : 'featured'),
     page: Number(sp.page ?? 1) || 1,
     maxPrice: sp.maxPrice ? Number(sp.maxPrice) : undefined,
   });
 
   const base = await appUrl('/spas');
   const activeFilters = [
+    near ? { key: 'near', label: `Near me${sp.radius ? ` · ${sp.radius} km` : ''}` } : null,
     sp.city ? { key: 'city', label: sp.city } : null,
     sp.spa ? { key: 'spa', label: SPA_CATEGORY_LABELS[sp.spa] ?? sp.spa } : null,
     sp.type ? { key: 'type', label: SPA_TYPE_LABELS[sp.type] ?? sp.type } : null,
@@ -78,13 +100,18 @@ export default async function SpasPage({ searchParams }: { searchParams: Promise
     sp.q ? { key: 'q', label: `“${sp.q}”` } : null,
   ].filter(Boolean) as { key: string; label: string }[];
 
-  const pageTitle = sp.city
-    ? `Spas in ${sp.city}`
-    : sp.spa
-      ? `${SPA_CATEGORY_LABELS[sp.spa] ?? sp.spa} spas`
-      : sp.category
-        ? `${CATEGORY_LABELS[sp.category] ?? sp.category} spas`
-        : 'Find your spa';
+  const requestedNear = Boolean(sp.near); // may be the `near=me` sentinel from the nav
+  const pageTitle = near
+    ? 'Spas near you'
+    : requestedNear
+      ? 'Spas near you'
+      : sp.city
+      ? `Spas in ${sp.city}`
+      : sp.spa
+        ? `${SPA_CATEGORY_LABELS[sp.spa] ?? sp.spa} spas`
+        : sp.category
+          ? `${CATEGORY_LABELS[sp.category] ?? sp.category} spas`
+          : 'Find your spa';
 
   return (
     <>
@@ -106,8 +133,19 @@ export default async function SpasPage({ searchParams }: { searchParams: Promise
         <div className="mx-auto max-w-7xl px-4 py-7 sm:px-6 lg:px-8">
           <h1 className="text-3xl">{pageTitle}</h1>
           <p className="mt-1.5 text-sm text-ink-500">
-            {results.total} {results.total === 1 ? 'spa' : 'spas'} · {results.totalAll} on the platform
+            {results.total} {results.total === 1 ? 'spa' : 'spas'}
+            {near && typeof radiusKm === 'number' && Number.isFinite(radiusKm)
+              ? ` within ${radiusKm} km of you — sorted by distance`
+              : requestedNear && !near
+                ? ' — share your location and we will sort them by distance'
+                : ''}{' '}
+            · {results.totalAll} on the platform
           </p>
+          {!near && (
+            <div className="mt-3">
+              <NearMeButton size="sm" />
+            </div>
+          )}
 
           <form action="/spas" method="get" className="mt-4 flex flex-col gap-2 sm:flex-row">
             <label className="sr-only" htmlFor="q">
@@ -127,6 +165,8 @@ export default async function SpasPage({ searchParams }: { searchParams: Promise
             {sp.category && <input type="hidden" name="category" value={sp.category} />}
             {sp.spa && <input type="hidden" name="spa" value={sp.spa} />}
             {sp.type && <input type="hidden" name="type" value={sp.type} />}
+            {sp.near && <input type="hidden" name="near" value={sp.near} />}
+            {sp.radius && <input type="hidden" name="radius" value={sp.radius} />}
             <button type="submit" className={buttonClasses('primary', 'md')}>
               Search
             </button>
@@ -230,6 +270,8 @@ export default async function SpasPage({ searchParams }: { searchParams: Promise
                   href={buildHref('/spas', {
                     ...sp,
                     [f.key]: undefined,
+                    // Dropping the location also drops the radius it came with.
+                    ...(f.key === 'near' ? { radius: undefined } : {}),
                   })}
                   className="inline-flex items-center gap-1.5 rounded-full border border-brand-200 bg-brand-50 px-3 py-1 text-[13px] text-brand-800 hover:bg-brand-100"
                 >
@@ -237,7 +279,7 @@ export default async function SpasPage({ searchParams }: { searchParams: Promise
                 </Link>
               ))}
             </div>
-            <SortSelect />
+            <SortSelect allowDistance={Boolean(near)} />
           </div>
 
           {results.items.length === 0 ? (

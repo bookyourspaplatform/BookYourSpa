@@ -1,9 +1,11 @@
 import type { Metadata } from 'next';
 import { asc, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { pages } from '@/db/schema';
+import { pages, settings as settingsTable } from '@/db/schema';
+import { DEFAULT_SETTINGS } from '@/lib/settings';
 import { pageMetadata } from '@/lib/seo';
 import { PagesManager } from '@/components/admin/pages-manager';
+import { SettingsForm } from '@/components/admin/settings-form';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,7 +15,14 @@ export async function generateMetadata(): Promise<Metadata> {
 
 export default async function AdminContentPage() {
   const db = await getDb();
-  const rows = await db.query.pages.findMany({ orderBy: [asc(pages.title)] });
+  const [rows, announcementRow] = await Promise.all([
+    db.query.pages.findMany({ orderBy: [asc(pages.title)] }),
+    db.query.settings.findFirst({ where: eq(settingsTable.key, 'site.announcement') }),
+  ]);
+  const announcement =
+    typeof announcementRow?.value === 'string'
+      ? announcementRow.value
+      : (DEFAULT_SETTINGS['site.announcement'] as string);
 
   return (
     <div className="space-y-5">
@@ -23,6 +32,17 @@ export default async function AdminContentPage() {
           The informational pages of the marketplace — these feed the footer, sitemap and metadata.
         </p>
       </div>
+
+      <section className="rounded-3xl border border-ink-100 bg-white p-5">
+        <div className="mb-4">
+          <h2 className="text-[16px] font-semibold">Announcement bar</h2>
+          <p className="text-[13px] text-ink-500">
+            Shown in the dark strip at the very top of every public page — leave empty to hide it.
+          </p>
+        </div>
+        <SettingsForm entries={[{ key: 'site.announcement', value: announcement }]} />
+      </section>
+
       <PagesManager
         pages={rows.map((p) => ({
           id: p.id,
