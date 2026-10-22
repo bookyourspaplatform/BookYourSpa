@@ -465,9 +465,13 @@ export default async function SpaDetailPage({ params }: { params: Promise<{ slug
                 <HighlightHeading id="about-heading">About {spa.provider.name}</HighlightHeading>
                 {descriptionText && (
                   <div className="mt-4 max-w-3xl space-y-4 text-[15px] leading-relaxed text-ink-600">
-                    {descriptionText.split(/\n{2,}/).map((para, i) => (
-                      <p key={i}>{para}</p>
-                    ))}
+                    {descriptionText
+                      .split(/\n{2,}/)
+                      .map((para) => stripHtml(para))
+                      .filter((para) => para.length > 0)
+                      .map((para, i) => (
+                        <p key={i}>{para}</p>
+                      ))}
                   </div>
                 )}
                 {facilities.length > 0 && (
