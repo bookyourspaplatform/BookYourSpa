@@ -1,6 +1,15 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Staff/branch photos are stored as base64 data URLs inside the row, so a
+  // server action carries the whole image. The 1 MB default silently breaks
+  // larger uploads (500), so allow up to 4 MB — just under Vercel's 4.5 MB
+  // request-body cap.
+  experimental: {
+    serverActions: {
+      bodySizeLimit: '4mb',
+    },
+  },
   // NOTE: cacheComponents stays off — this marketplace renders live DB data
   // (availability, prices, bookings) per request rather than from a prerender
   // cache. Pages that must be fresh opt in with `export const dynamic`.

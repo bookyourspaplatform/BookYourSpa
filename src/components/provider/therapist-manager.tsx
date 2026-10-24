@@ -147,40 +147,57 @@ export function TherapistManager({
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    const url = await fileToDataUrl(file);
-    if (!isRenderableImage(url)) {
-      toast.error('Unsupported image', 'Use a JPG, PNG, WebP or GIF file.');
-      return;
+    try {
+      // Avatars render at ≤64px — downscale hard so the upload stays small
+      // enough to save and doesn't bloat the page as an inline data URL.
+      const url = await fileToDataUrl(file, 512, 0.82);
+      if (!isRenderableImage(url)) {
+        toast.error('Unsupported image', 'Use a JPG, PNG, WebP or GIF file.');
+        return;
+      }
+      setDraft((d) => ({ ...d, avatarUrl: url }));
+    } catch (err) {
+      toast.error(
+        'Could not read that photo',
+        err instanceof Error ? err.message : 'Try a JPG, PNG or WebP file.',
+      );
     }
-    setDraft((d) => ({ ...d, avatarUrl: url }));
   }
 
   function save() {
     startTransition(async () => {
-      const res = await saveTherapist({
-        ...(draft.id ? { id: draft.id } : {}),
-        branchId: draft.branchId,
-        name: draft.name.trim(),
-        bio: draft.bio.trim() || null,
-        specialties: draft.specialties
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean)
-          .slice(0, 12),
-        avatarUrl: draft.avatarUrl.trim() || null,
-        role: draft.role,
-        salaryType: draft.salaryType,
-        salaryValue: Math.max(0, Math.round(draft.salaryValue)),
-        incentiveType: draft.incentiveType,
-        incentiveValue: Math.max(0, Math.round(draft.incentiveValue)),
-        active: draft.active,
-      });
-      if (res.ok) {
-        toast.success(draft.id ? 'Staff updated' : 'Staff added');
-        setOpen(false);
-        router.refresh();
-      } else {
-        toast.error('Could not save', res.error);
+      try {
+        const res = await saveTherapist({
+          ...(draft.id ? { id: draft.id } : {}),
+          branchId: draft.branchId,
+          name: draft.name.trim(),
+          bio: draft.bio.trim() || null,
+          specialties: draft.specialties
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+            .slice(0, 12),
+          avatarUrl: draft.avatarUrl.trim() || null,
+          role: draft.role,
+          salaryType: draft.salaryType,
+          salaryValue: Math.max(0, Math.round(draft.salaryValue)),
+          incentiveType: draft.incentiveType,
+          incentiveValue: Math.max(0, Math.round(draft.incentiveValue)),
+          active: draft.active,
+        });
+        if (res.ok) {
+          toast.success(draft.id ? 'Staff updated' : 'Staff added');
+          setOpen(false);
+          router.refresh();
+        } else {
+          toast.error('Could not save', res.error);
+        }
+      } catch (err) {
+        // A failed action (network, oversized photo) must not look like a save.
+        toast.error(
+          'Could not save',
+          err instanceof Error ? err.message : 'Something went wrong — please try again.',
+        );
       }
     });
   }
