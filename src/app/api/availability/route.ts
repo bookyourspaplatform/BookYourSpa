@@ -21,10 +21,21 @@ export async function GET(req: Request) {
   const therapistId = url.searchParams.get('therapistId');
   const from = url.searchParams.get('from');
   const days = Number(url.searchParams.get('days') ?? '7');
+  const optionIndexRaw = url.searchParams.get('optionIndex');
+  const optionIndex = optionIndexRaw === null ? null : Number(optionIndexRaw);
+  const personsRaw = url.searchParams.get('persons');
+  const persons = personsRaw === null ? 1 : Number(personsRaw);
 
   if (!branchId || !treatmentId) return jsonError('branchId and treatmentId are required.');
   if (from && !/^\d{4}-\d{2}-\d{2}$/.test(from)) return jsonError('from must be YYYY-MM-DD.');
   if (!Number.isFinite(days) || days < 1 || days > 62) return jsonError('days must be between 1 and 62.');
+  if (
+    optionIndex !== null &&
+    (!Number.isInteger(optionIndex) || optionIndex < 0 || optionIndex > 9)
+  )
+    return jsonError('optionIndex must be an integer between 0 and 9.');
+  if (!Number.isInteger(persons) || persons < 1 || persons > 8)
+    return jsonError('persons must be an integer between 1 and 8.');
 
   const db = await getDb();
 
@@ -34,6 +45,8 @@ export async function GET(req: Request) {
   const result = await getAvailability(db, {
     branchId,
     treatmentId,
+    optionIndex,
+    persons,
     therapistId: therapistId || null,
     from: from ?? undefined,
     days,

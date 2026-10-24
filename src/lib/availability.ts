@@ -11,6 +11,7 @@ import {
   type BranchHour,
 } from '@/db/schema';
 import { dateKeyInTz, minutesOf } from '@/lib/utils';
+import { pickPriceOption } from '@/lib/pricing';
 
 /* ------------------------------------------------------------------ */
 /* Timezone helpers (no external dependency)                           */
@@ -95,6 +96,8 @@ export type BookedInput = {
   treatmentId: string;
   startAt: Date;
   endAt: Date;
+  /** Guests occupying shared-facility capacity (defaults to 1). */
+  guestCount?: number;
 };
 
 type Window = { start: number; end: number }; // minutes after local midnight
@@ -154,8 +157,11 @@ export function slotsForDate(params: {
   now: Date;
   therapistId?: string | null;
   treatmentId?: string;
+  /** Guests this booking needs in a shared facility (default 1). */
+  persons?: number;
 }): Slot[] {
   const { branch, date, durationMin, requiresTherapist, now } = params;
+  const persons = Math.max(1, params.persons ?? 1);
   const weekday = weekdayOf(date);
   const buffer = branch.bufferMinutes;
   const interval = Math.max(5, branch.slotIntervalMinutes);
@@ -205,12 +211,13 @@ export function slotsForDate(params: {
       const start = zonedToUtc(date, startMin, branch.timezone);
       if (start.getTime() < earliest) continue;
       const end = zonedToUtc(date, endMin + buffer, branch.timezone);
-      const concurrent = activeBookings.filter((b) => {
-        if (b.therapistId !== null || b.treatmentId !== params.treatmentId) return false;
+      const concurrent = activeBookings.reduce((used, b) => {
+        if (b.therapistId !== null || b.treatmentId !== params.treatmentId) return used;
         const local = bookedLocalMinutes(b, date, branch.timezone);
-        return local ? overlaps(startMin, endMin + buffer, local.start, local.end) : false;
-      });
-      if (concurrent.length >= params.capacity) continue;
+        if (!local || !overlaps(startMin, endMin + buffer, local.start, local.end)) return used;
+        return used + Math.max(1, b.guestCount ?? 1);
+      }, 0);
+      if (concurrent + persons > params.capacity) continue;
       slots.push({ start, end, therapistId: null, therapistName: null });
     }
     return slots.sort((a, b) => a.start.getTime() - b.start.getTime());
@@ -286,12 +293,15 @@ export function slotsForDate(params: {
 
 /* ------------------------------------------------------------------ */
 /* DB-backed availability                                              */
-/* ------------------------------------------------------------------ */
-
-export type AvailabilityArgs = {
+/* ------------------------------------------------------------------ */export type AvailabilityArgs = {
   branchId: string;
   treatmentId: string;
   therapistId?: string | null;
+  /** Index into the treatment's price options — selects which duration tier
+   * slots are generated for (invalid/absent → the treatment default). */
+  optionIndex?: number | null;
+  /** Guests this booking needs in a shared facility (default 1). */
+  persons?: number;
   /** First branch-local date (YYYY-MM-DD). Defaults to today in branch tz. */
   from?: string;
   /** Number of days to generate (default 7, max 62). */
@@ -334,6 +344,13 @@ export async function getAvailability(
   if (!treatment || treatment.status !== 'active')
     return { ok: false, error: 'This treatment is currently unavailable.' };
 
+  // Slots must be as long as the chosen duration tier, not just the default.
+  const chosenOption = pickPriceOption(treatment.priceOptions, args.optionIndex);
+  const durationMin = chosenOption?.durationMin ?? treatment.durationMin;
+  // Shared-facility capacity can differ per duration tier.
+  const capacity = chosenOption?.capacity ?? treatment.capacity;
+  const persons = Math.max(1, Math.min(args.persons ?? 1, 12));
+
   const now = args.now ?? new Date();
   const days = Math.min(Math.max(args.days ?? 7, 1), 62);
   const from = args.from ?? dateKeyInTz(now, branch.timezone);
@@ -373,7 +390,7 @@ export async function getAvailability(
         sql`${bookings.status} IN ('pending','confirmed')`,
         eq(bookings.branchId, branch.id),
       ),
-      columns: { therapistId: true, treatmentId: true, startAt: true, endAt: true },
+      columns: { therapistId: true, treatmentId: true, startAt: true, endAt: true, guestCount: true },
     }),
   ]);
 
@@ -417,18 +434,132 @@ export async function getAvailability(
       slots: slotsForDate({
         branch: rules,
         date: dateStr,
-        durationMin: treatment.durationMin,
+        durationMin,
         requiresTherapist: treatment.requiresTherapist,
-        capacity: treatment.capacity,
+        capacity,
         therapists: therapistInputs,
         exceptions: exceptionRows,
         bookings: bookedRows,
         now,
         therapistId: args.therapistId ?? null,
         treatmentId: treatment.id,
+        persons,
       }),
     });
   }
 
   return { ok: true, days: dayList };
+}
+
+/* ------------------------------------------------------------------ */
+/* "Together" availability — several treatments, one shared start time */
+/* ------------------------------------------------------------------ */
+
+export type TogetherItem = {
+  treatmentId: string;
+  optionIndex?: number | null;
+  persons?: number;
+  therapistId?: string | null;
+};
+
+export type TogetherAssignment = {
+  itemIndex: number;
+  therapistId: string | null;
+  therapistName: string | null;
+};
+
+export type TogetherSlot = {
+  start: Date;
+  end: Date;
+  assignments: TogetherAssignment[];
+};
+
+export type TogetherDay = { date: string; slots: TogetherSlot[] };
+
+/**
+ * Slots where EVERY requested treatment can start at the same instant, with a
+ * conflict-free therapist assignment (no therapist serves two treatments at
+ * once). Returns the intersection per day.
+ */
+export async function getTogetherAvailability(
+  db: AppDb,
+  args: {
+    branchId: string;
+    items: TogetherItem[];
+    from?: string;
+    days?: number;
+    now?: Date;
+  },
+): Promise<{ ok: true; days: TogetherDay[] } | { ok: false; error: string }> {
+  if (args.items.length === 0) return { ok: false, error: 'Add at least one treatment.' };
+  if (args.items.length > 8)
+    return { ok: false, error: 'A single booking can hold up to 8 treatments.' };
+
+  const perItem: { ok: true; days: DayAvailability[] }[] = [];
+  for (const item of args.items) {
+    const res = await getAvailability(db, {
+      branchId: args.branchId,
+      treatmentId: item.treatmentId,
+      optionIndex: item.optionIndex ?? null,
+      therapistId: item.therapistId ?? null,
+      persons: item.persons ?? 1,
+      from: args.from,
+      days: args.days,
+      now: args.now,
+    });
+    if (!res.ok) return res;
+    perItem.push(res);
+  }
+
+  const dates = perItem[0]!.days.map((d) => d.date);
+  const days: TogetherDay[] = dates.map((date, dayIdx) => {
+    const slotsPerItem = perItem.map((r) => r.days[dayIdx]?.slots ?? []);
+
+    // Candidate start instants present in EVERY item's day.
+    const first = slotsPerItem[0] ?? [];
+    const common = first
+      .map((s) => s.start.getTime())
+      .filter((t) => slotsPerItem.every((slots) => slots.some((s) => s.start.getTime() === t)));
+
+    const out: TogetherSlot[] = [];
+    for (const startMs of [...new Set(common)].sort((a, b) => a - b)) {
+      const chosen = slotsPerItem.map((slots) => slots.filter((s) => s.start.getTime() === startMs));
+
+      // Therapist-requiring items must get distinct therapists at this instant.
+      // (Slots with a null therapist belong to shared-facility treatments.)
+      const needsTherapist = chosen.map((c) => c.some((s) => s.therapistId !== null));
+      const assignment: (Slot | null)[] = new Array(chosen.length).fill(null);
+      const assign = (i: number, used: Set<string>): boolean => {
+        if (i >= chosen.length) return true;
+        if (!needsTherapist[i]) {
+          assignment[i] = chosen[i]![0] ?? null;
+          return assign(i + 1, used);
+        }
+        for (const cand of chosen[i]!) {
+          if (!cand.therapistId || used.has(cand.therapistId)) continue;
+          used.add(cand.therapistId);
+          assignment[i] = cand;
+          if (assign(i + 1, used)) return true;
+          used.delete(cand.therapistId);
+          assignment[i] = null;
+        }
+        return false;
+      };
+      if (!assign(0, new Set())) continue;
+
+      out.push({
+        start: new Date(startMs),
+        end: new Date(Math.max(...assignment.map((s, i) => (s ? s.end.getTime() : chosen[i]![0]!.end.getTime())))),
+        assignments: assignment.map((s, i) => ({
+          itemIndex: i,
+          therapistId: s?.therapistId ?? null,
+          therapistName: s?.therapistName ?? null,
+        })),
+      });
+    }
+
+    return { date, slots: out };
+  });
+
+  return { ok: true, days };
 }

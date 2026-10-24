@@ -3,7 +3,11 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { AlertCircle } from 'lucide-react';
 import { getDb } from '@/db';
+import { products as productsTable } from '@/db/schema';
+import { eq } from 'drizzle-orm';
 import { getBranchDetail } from '@/lib/catalog';
+import { DELIVERY_TYPE_LABELS, GENRE_LABELS, SPA_TYPE_LABELS } from '@/lib/catalog';
+import { branchOptionPrice } from '@/lib/pricing';
 import { getCurrentUser } from '@/lib/auth/session';
 import { stripHtml } from '@/lib/security';
 import { getSettings } from '@/lib/settings';
@@ -28,7 +32,7 @@ export default async function BookPage({
   searchParams,
 }: {
   params: Promise<{ slug: string; branch: string }>;
-  searchParams: Promise<{ treatment?: string; cancelled?: string }>;
+  searchParams: Promise<{ treatment?: string; option?: string; cancelled?: string }>;
 }) {
   const { slug, branch: branchSlug } = await params;
   const sp = await searchParams;
@@ -41,15 +45,34 @@ export default async function BookPage({
   const user = await getCurrentUser();
   const settings = await getSettings();
 
-  const preselected =
-    sp.treatment && detail.treatments.some((t) => t.id === sp.treatment) ? sp.treatment : null;
+  const preselectedRow =
+    sp.treatment && detail.treatments.some((t) => t.id === sp.treatment)
+      ? detail.treatments.find((t) => t.id === sp.treatment)!
+      : null;
+  const preselected = preselectedRow?.id ?? null;
+  const optionIdx = sp.option === undefined ? Number.NaN : Number(sp.option);
+  const preselectedOptionIndex =
+    preselectedRow &&
+    Number.isInteger(optionIdx) &&
+    optionIdx >= 0 &&
+    optionIdx < (preselectedRow.priceOptions?.length ?? 0)
+      ? optionIdx
+      : null;
 
   const base = `/spas/${slug}/${branchSlug}`;
+
+  // Retail products sold at this branch — bookable alongside treatments.
+  const productList = await db.query.products.findMany({
+    where: eq(productsTable.branchId, b.id),
+    columns: { id: true, name: true, description: true, price: true, active: true },
+    orderBy: (t, { asc }) => [asc(t.name)],
+  });
+  const branchProducts = productList.filter((p) => p.active);
+
   const jsonLd = breadcrumbJsonLd(
     [
       { name: 'Home', path: '/' },
       { name: 'Spas', path: '/spas' },
-      { name: b.provider.name, path: `/spas/${slug}` },
       { name: b.name, path: base },
       { name: 'Book', path: `${base}/book` },
     ],
@@ -66,19 +89,13 @@ export default async function BookPage({
             <Link href="/spas" className="hover:underline">
               Spas
             </Link>{' '}
-            /{' '}
-            <Link href={`/spas/${slug}`} className="hover:underline">
-              {b.provider.name}
-            </Link>{' '}
-            /{' '}
+            ·{' '}
             <Link href={base} className="hover:underline">
               {b.name}
             </Link>{' '}
-            / Book
+            · <span className="font-semibold text-ink-900">Booking</span>
           </nav>
-          <h1 className="mt-2 text-2xl sm:text-3xl">
-            Book at {b.provider.name} — {b.name}
-          </h1>
+          <h1 className="sr-only">Book at {b.name}</h1>
         </div>
       </div>
 
@@ -112,15 +129,42 @@ export default async function BookPage({
           description: t.description ? stripHtml(t.description) : '',
           durationMin: t.durationMin,
           price: t.price,
+          // Branch-priced duration tiers — identical to what the spa page shows.
+          priceOptions: (t.priceOptions ?? []).map((o) => ({
+            durationMin: o.durationMin,
+            price: branchOptionPrice(o, t.listPrice, t.price),
+            capacity: o.capacity ?? t.capacity,
+          })),
           category: t.category,
           requiresTherapist: t.requiresTherapist,
+          capacity: t.capacity,
+          benefits: t.benefits,
+          // Chip labels resolved here so the wizard stays display-only.
+          tags: t.tags
+            .map((tag) => SPA_TYPE_LABELS[tag])
+            .filter((label): label is string => Boolean(label))
+            .slice(0, 4),
+          genreLabel: t.genre === 'both' ? null : (GENRE_LABELS[t.genre] ?? t.genre),
+          deliveryLabel:
+            t.deliveryType === 'both' ? null : (DELIVERY_TYPE_LABELS[t.deliveryType] ?? t.deliveryType),
         }))}
-        therapists={detail.therapistList.map((t) => ({
-          id: t.id,
-          name: t.name,
-          specialties: t.specialties,
+        products={branchProducts.map((p) => ({
+          id: p.id,
+          name: p.name,
+          description: p.description,
+          price: p.price,
         }))}
+        therapists={
+          b.showTherapistOnline
+            ? detail.therapistList.map((t) => ({
+                id: t.id,
+                name: t.name,
+                specialties: t.specialties,
+              }))
+            : []
+        }
         preselectedTreatmentId={preselected}
+        preselectedOptionIndex={preselectedOptionIndex}
         user={
           user
             ? { name: user.name, email: user.email, phone: user.phone ?? '', role: user.role }

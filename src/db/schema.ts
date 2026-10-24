@@ -632,6 +632,10 @@ export const bookings = pgTable(
     startAt: timestamp('start_at', { withTimezone: true }).notNull(),
     endAt: timestamp('end_at', { withTimezone: true }).notNull(),
     timezone: text('timezone').notNull().default('Asia/Makassar'),
+    /** Guests attending this appointment (couples / group sessions). */
+    guestCount: integer('guest_count').notNull().default(1),
+    /** Bookings created in one checkout (multi-treatment cart) share this id. */
+    groupId: text('group_id'),
     status: text('status', { enum: BOOKING_STATUSES }).notNull().default('pending'),
     paymentStatus: text('payment_status', { enum: PAYMENT_STATUSES }).notNull().default('unpaid'),
     channel: text('channel', { enum: BOOKING_CHANNELS }).notNull().default('direct'),
@@ -663,6 +667,7 @@ export const bookings = pgTable(
     index('bookings_agent_idx').on(t.agentId),
     index('bookings_status_idx').on(t.status),
     index('bookings_email_idx').on(t.guestEmail),
+    index('bookings_group_idx').on(t.groupId),
     // Belt-and-braces against double booking: one *active* appointment per therapist slot.
     uniqueIndex('bookings_therapist_slot_uq')
       .on(t.therapistId, t.startAt)
@@ -678,6 +683,7 @@ export const bookingsRelations = relations(bookings, ({ one, many }) => ({
   customer: one(users, { fields: [bookings.customerId], references: [users.id] }),
   agent: one(agents, { fields: [bookings.agentId], references: [agents.id] }),
   payments: many(payments),
+  bookingProducts: many(bookingProducts),
   commissions: many(commissions),
 }));
 
@@ -873,6 +879,32 @@ export const products = pgTable(
 export const productsRelations = relations(products, ({ one }) => ({
   provider: one(providers, { fields: [products.providerId], references: [providers.id] }),
   branch: one(branches, { fields: [products.branchId], references: [branches.id] }),
+}));
+
+/**
+ * Retail product lines added to a booking checkout (attached to the group's
+ * primary booking row). Prices are snapshotted at purchase time.
+ */
+export const bookingProducts = pgTable(
+  'booking_products',
+  {
+    id: text('id').primaryKey(), // bpr_xxxxxxxx
+    bookingId: text('booking_id')
+      .notNull()
+      .references(() => bookings.id, { onDelete: 'cascade' }),
+    productId: text('product_id').references(() => products.id, { onDelete: 'set null' }),
+    name: text('name').notNull(),
+    unitPrice: integer('unit_price').notNull().default(0),
+    quantity: integer('quantity').notNull().default(1),
+    currency: text('currency').notNull().default('IDR'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index('booking_products_booking_idx').on(t.bookingId), index('booking_products_product_idx').on(t.productId)],
+);
+
+export const bookingProductsRelations = relations(bookingProducts, ({ one }) => ({
+  booking: one(bookings, { fields: [bookingProducts.bookingId], references: [bookings.id] }),
+  product: one(products, { fields: [bookingProducts.productId], references: [products.id] }),
 }));
 
 /* ------------------------------------------------------------------ */

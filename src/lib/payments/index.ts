@@ -1,4 +1,4 @@
-import { and, eq, or } from 'drizzle-orm';
+import { and, eq, ne, or, sql } from 'drizzle-orm';
 import { getDb, type Tx } from '@/db';
 import { bookings, branches, payments, treatments, type Booking, type PaymentGateway } from '@/db/schema';
 import { sendBookingVoucherEmail } from '@/lib/email';
@@ -120,6 +120,24 @@ export async function confirmPayment(opts: {
         expiresAt: null,
       })
       .where(eq(bookings.id, bookingId));
+
+    // One checkout can hold several treatment lines — the payment covers the
+    // whole group, so confirm/release every sibling row too.
+    if (booking.groupId) {
+      const siblings = and(
+        eq(bookings.groupId, booking.groupId),
+        ne(bookings.id, bookingId),
+        sql`${bookings.status} IN ('pending','confirmed')`,
+      );
+      await tx
+        .update(bookings)
+        .set({ paymentStatus: 'paid', paidAt: new Date(), expiresAt: null })
+        .where(siblings);
+      await tx
+        .update(bookings)
+        .set({ status: 'confirmed' })
+        .where(and(siblings, eq(bookings.status, 'pending')));
+    }
   });
 
   const fresh = await db.query.bookings.findFirst({ where: eq(bookings.id, bookingId) });
@@ -172,6 +190,7 @@ export async function refundBookingPayment(
 
   const refundable = payment.amount - payment.refundedAmount;
   if (refundable <= 0) return { ok: false, error: 'Nothing left to refund.' };
+  const totalRefunded = payment.refundedAmount + refundable;
 
   let refundId: string;
   try {
@@ -184,21 +203,29 @@ export async function refundBookingPayment(
     return { ok: false, error: err instanceof Error ? err.message : 'Refund failed.' };
   }
 
-  const totalRefunded = payment.refundedAmount + refundable;
+  const refundedStatus = totalRefunded >= payment.amount ? 'refunded' : 'partially_refunded';
+  const bookingRow = await db.query.bookings.findFirst({ where: eq(bookings.id, bookingId) });
   await db.transaction(async (tx) => {
     await tx
       .update(payments)
       .set({
         refundedAmount: totalRefunded,
-        status: totalRefunded >= payment.amount ? 'refunded' : 'partially_refunded',
+        status: refundedStatus,
         refundedAt: new Date(),
         gatewayData: { ...(payment.gatewayData ?? {}), lastRefundId: refundId, reason: opts.reason },
       })
       .where(eq(payments.id, payment.id));
     await tx
       .update(bookings)
-      .set({ paymentStatus: totalRefunded >= payment.amount ? 'refunded' : 'partially_refunded' })
+      .set({ paymentStatus: refundedStatus })
       .where(eq(bookings.id, bookingId));
+    // Refund state mirrors across every line of the group checkout.
+    if (bookingRow?.groupId) {
+      await tx
+        .update(bookings)
+        .set({ paymentStatus: refundedStatus })
+        .where(and(eq(bookings.groupId, bookingRow.groupId), ne(bookings.id, bookingId)));
+    }
   });
 
   await logAudit({

@@ -24,7 +24,7 @@ function initialsOf(name: string) {
     .toUpperCase();
 }
 
-/** Rough spend level from the provider's min price in its own currency. */
+/** Rough spend level from the outlet's min price in its own currency. */
 export function priceLevel(minPrice: number | null, currency: string): string {
   if (minPrice === null) return '';
   const major = currency === 'IDR' || currency === 'JPY' ? minPrice : minPrice / 100;
@@ -62,12 +62,12 @@ export function SpaCard({
 }) {
   const gradient = GRADIENTS[index % GRADIENTS.length];
   const distance = distanceKm ?? spa.distanceKm;
-  const firstBranch = spa.branches[0];
-  const bookHref = firstBranch ? `/spas/${spa.slug}/${firstBranch.slug}/book` : `/spas/${spa.slug}`;
+  const href = `/spas/${spa.slug}/${spa.branchSlug}`;
+  const bookHref = `${href}/book`;
 
   return (
     <div className="group relative flex flex-col overflow-hidden rounded-2xl border border-ink-100 bg-white shadow-[0_1px_2px_rgba(23,32,29,0.05)] transition-all hover:-translate-y-0.5 hover:shadow-lg">
-      <Link href={`/spas/${spa.slug}`} className="relative flex h-44 items-center justify-center">
+      <Link href={href} className="relative flex h-44 items-center justify-center">
         <span className={`absolute inset-0 bg-gradient-to-br ${gradient}`} aria-hidden />
         {spa.coverUrl && (
           // eslint-disable-next-line @next/next/no-img-element -- cover may be a branch-uploaded data URL
@@ -102,11 +102,11 @@ export function SpaCard({
           ) : (
             <span className="text-[13px] text-ink-400">New · no reviews yet</span>
           )}
-          <span className="text-[13px] font-medium text-ink-400">{priceLevel(spa.minPrice, spa.baseCurrency)}</span>
+          <span className="text-[13px] font-medium text-ink-400">{priceLevel(spa.minPrice, spa.currency)}</span>
         </div>
 
         <div>
-          <Link href={`/spas/${spa.slug}`} className="text-lg leading-snug hover:text-brand-700">
+          <Link href={href} className="text-lg leading-snug hover:text-brand-700">
             {spa.name}
           </Link>
           {spa.tagline && <p className="mt-0.5 text-[13.5px] italic leading-snug text-brand-700">{spa.tagline}</p>}
@@ -114,7 +114,7 @@ export function SpaCard({
 
         <p className="flex flex-wrap items-center gap-x-1.5 text-[13px] text-ink-500">
           <MapPin className="size-3.5 shrink-0" />
-          {spa.cities.join(', ')}, {spa.country}
+          {spa.city}, {spa.country}
           {typeof distance === 'number' && (
             <span className="font-medium text-brand-700">· {distance} km away</span>
           )}
@@ -143,11 +143,11 @@ export function SpaCard({
           <div>
             <p className="text-[11.5px] uppercase tracking-wide text-ink-400">From</p>
             <p className="text-[15px] font-semibold text-brand-800">
-              {spa.minPrice !== null ? formatDisplayMoney(spa.minPrice, spa.baseCurrency, display) : '—'}
+              {spa.minPrice !== null ? formatDisplayMoney(spa.minPrice, spa.currency, display) : '—'}
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Link href={`/spas/${spa.slug}`} className={buttonClasses('outline', 'sm')}>
+            <Link href={href} className={buttonClasses('outline', 'sm')}>
               View Spa
             </Link>
             <Link href={bookHref} className={buttonClasses('primary', 'sm')}>

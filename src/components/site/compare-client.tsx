@@ -15,7 +15,8 @@ type Offer = {
   price: number;
   currency: string;
   branch: { name: string; slug: string; city: string; country: string };
-  provider: { name: string; slug: string };
+  /** Booking URL path segment only — never displayed. */
+  provider: { slug: string };
 };
 
 type SortKey = 'price_asc' | 'price_desc' | 'duration' | 'name';
@@ -49,7 +50,6 @@ export function CompareClient({
         (city === 'all' || o.branch.city === city) &&
         (!query ||
           o.name.toLowerCase().includes(query) ||
-          o.provider.name.toLowerCase().includes(query) ||
           o.branch.name.toLowerCase().includes(query)),
     );
     list = [...list].sort((a, b) => {
@@ -150,9 +150,9 @@ export function CompareClient({
                   )}
                 </div>
                 <p className="mt-1 flex flex-wrap items-center gap-x-2 text-[13.5px] text-ink-500">
-                  <span className="font-medium text-ink-700">{o.provider.name}</span>
+                  <span className="font-medium text-ink-700">{o.branch.name}</span>
                   <span className="flex items-center gap-1">
-                    <MapPin className="size-3.5" /> {o.branch.name}, {o.branch.city}
+                    <MapPin className="size-3.5" /> {o.branch.city}
                   </span>
                 </p>
               </div>

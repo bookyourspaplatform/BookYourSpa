@@ -4,7 +4,7 @@ import { notFound } from 'next/navigation';
 import { CalendarPlus, CheckCircle2, Clock, Mail, MapPin, Phone, ShieldCheck, XCircle } from 'lucide-react';
 import { getDb } from '@/db';
 import { bookings } from '@/db/schema';
-import { eq } from 'drizzle-orm';
+import { asc, eq } from 'drizzle-orm';
 import { getSettings } from '@/lib/settings';
 import { formatMoney } from '@/lib/money';
 import { cn, formatDate } from '@/lib/utils';
@@ -37,23 +37,35 @@ export default async function VoucherPage({ params }: { params: Promise<{ code: 
   const booking = await db.query.bookings.findFirst({
     where: eq(bookings.code, code.toUpperCase().trim()),
     with: {
-      branch: { with: { provider: true } },
+      branch: true,
       treatment: true,
       therapist: true,
       payments: true,
+      bookingProducts: true,
     },
   });
   if (!booking || !booking.branch || !booking.treatment) notFound();
 
+  // Multi-treatment checkouts share a group id — show every line on one voucher.
+  const groupRows = booking.groupId
+    ? await db.query.bookings.findMany({
+        where: eq(bookings.groupId, booking.groupId),
+        with: { treatment: true, therapist: true },
+        orderBy: asc(bookings.createdAt),
+      })
+    : [booking];
+  const productLines = booking.bookingProducts ?? [];
+  const grandTotal = groupRows.reduce((sum, row) => sum + row.totalAmount, 0);
+  const isGroup = groupRows.length > 1;
+
   const settings = await getSettings();
   const b = booking.branch;
-  const provider = b.provider;
   const tz = booking.timezone || b.timezone;
   const cancelled = booking.status === 'cancelled';
   const awaitingPayment = booking.paymentStatus === 'unpaid' && booking.status === 'pending';
 
   const googleCal = (() => {
-    const title = `${booking.treatment.name} at ${provider.name} — ${b.name}`;
+    const title = `${booking.treatment.name} at ${b.name}`;
     const details = `Voucher ${booking.code}. Present this voucher at reception.`;
     const location = `${b.addressLine}, ${b.city}, ${b.country}`.trim();
     const url = process.env.NEXT_PUBLIC_SITE_URL
@@ -73,7 +85,7 @@ export default async function VoucherPage({ params }: { params: Promise<{ code: 
   const jsonLd = {
     '@context': 'https://schema.org',
     '@type': 'Event',
-    name: `${booking.treatment.name} — ${provider.name}`,
+    name: `${booking.treatment.name} — ${b.name}`,
     startDate: booking.startAt.toISOString(),
     endDate: booking.endAt.toISOString(),
     eventStatus: cancelled
@@ -84,7 +96,7 @@ export default async function VoucherPage({ params }: { params: Promise<{ code: 
       name: b.name,
       address: `${b.addressLine}, ${b.city}, ${b.country}`.trim(),
     },
-    performer: { '@type': 'Organization', name: provider.name },
+    performer: { '@type': 'Organization', name: b.name },
     offers: {
       '@type': 'Offer',
       price: String(booking.totalAmount),
@@ -150,9 +162,9 @@ export default async function VoucherPage({ params }: { params: Promise<{ code: 
 
           <dl className="grid gap-x-6 gap-y-5 px-6 py-6 sm:grid-cols-2">
             <VoucherField icon={<MapPin className="size-4" />} term="Spa">
-              <span className="font-medium">{provider.name}</span>
+              <span className="font-medium">{b.name}</span>
               <span className="block text-[13px] text-ink-500">
-                {b.name} · {b.addressLine}, {b.city}, {b.country}
+                {b.addressLine}, {b.city}, {b.country}
               </span>
             </VoucherField>
             <VoucherField icon={<Clock className="size-4" />} term="Date & time">
@@ -162,11 +174,14 @@ export default async function VoucherPage({ params }: { params: Promise<{ code: 
                 {formatDate(booking.endAt, tz, { timeStyle: 'short' })} ({tz})
               </span>
             </VoucherField>
-            <VoucherField icon={<ShieldCheck className="size-4" />} term="Treatment">
-              <span className="font-medium">{booking.treatment.name}</span>
+            <VoucherField icon={<ShieldCheck className="size-4" />} term={isGroup ? 'Treatments' : 'Treatment'}>
+              <span className="font-medium">
+                {isGroup ? `${groupRows.length} treatments booked` : booking.treatment.name}
+              </span>
               <span className="block text-[13px] text-ink-500">
-                {booking.treatment.durationMin} min
-                {booking.therapist ? ` · Therapist: ${booking.therapist.name}` : ''}
+                {isGroup ? 'Each appointment has its own time and therapist below' : `${booking.treatment.durationMin} min`}
+                {!isGroup && booking.therapist ? ` · Therapist: ${booking.therapist.name}` : ''}
+                {!isGroup && booking.guestCount > 1 ? ` · ${booking.guestCount} persons` : ''}
               </span>
             </VoucherField>
             <VoucherField icon={<Mail className="size-4" />} term="Guest">
@@ -175,11 +190,48 @@ export default async function VoucherPage({ params }: { params: Promise<{ code: 
             </VoucherField>
           </dl>
 
+          {(isGroup || productLines.length > 0) && (
+            <section className="border-t border-ink-100 px-6 py-5">
+              <p className="text-[12px] uppercase tracking-[0.18em] text-ink-400">Your booking</p>
+              <ul className="mt-3 divide-y divide-ink-100">
+                {groupRows.map((row) => (
+                  <li key={row.id} className="flex items-start justify-between gap-4 py-2.5">
+                    <div>
+                      <p className="text-[14.5px] font-medium text-ink-800">{row.treatment?.name ?? 'Treatment'}</p>
+                      <p className="text-[13px] tabular-nums text-ink-500">
+                        {formatDate(row.startAt, tz, { dateStyle: 'medium', timeStyle: 'short' })} –{' '}
+                        {formatDate(row.endAt, tz, { timeStyle: 'short' })}
+                        {row.therapist ? ` · ${row.therapist.name}` : ''}
+                        {row.guestCount > 1 ? ` · ${row.guestCount} persons` : ''}
+                      </p>
+                    </div>
+                    <span className="shrink-0 text-[14.5px] font-semibold tabular-nums text-ink-800">
+                      {formatMoney(row.totalAmount, row.currency)}
+                    </span>
+                  </li>
+                ))}
+                {productLines.map((line) => (
+                  <li key={line.id} className="flex items-start justify-between gap-4 py-2.5">
+                    <div>
+                      <p className="text-[14.5px] font-medium text-ink-800">{line.name}</p>
+                      <p className="text-[13px] tabular-nums text-ink-500">
+                        {line.quantity} × {formatMoney(line.unitPrice, line.currency)}
+                      </p>
+                    </div>
+                    <span className="shrink-0 text-[14.5px] font-semibold tabular-nums text-ink-800">
+                      {formatMoney(line.unitPrice * line.quantity, line.currency)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
           <footer className="flex flex-wrap items-center justify-between gap-4 border-t border-ink-100 bg-sand-50 px-6 py-4">
             <div>
               <p className="text-[12px] uppercase tracking-wide text-ink-400">Total paid</p>
               <p className="text-lg font-semibold tabular-nums text-brand-800">
-                {formatMoney(booking.totalAmount, booking.currency)}
+                {formatMoney(grandTotal, booking.currency)}
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">

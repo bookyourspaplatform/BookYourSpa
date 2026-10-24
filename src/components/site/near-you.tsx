@@ -13,8 +13,8 @@ const RADII = [5, 10, 25, 50, 100];
 
 /**
  * "Spas around you": asks for the visitor's live location, then sorts and
- * filters the spa list by great-circle distance to the nearest branch.
- * Without a location it falls back to the most-loved (top-rated) spas.
+ * filters the outlet list by great-circle distance. Without a location it
+ * falls back to the most-loved (top-rated) outlets.
  */
 export function NearYouSection({
   spas,
@@ -47,11 +47,11 @@ export function NearYouSection({
   const located = origin
     ? spas
         .map((spa) => {
-          const distances = spa.branches
-            .filter((b) => b.lat != null && b.lng != null)
-            .map((b) => haversineKm(origin.lat, origin.lng, Number(b.lat), Number(b.lng)));
-          const nearest = distances.length ? Math.min(...distances) : null;
-          return { spa, distanceKm: nearest === null ? null : Math.round(nearest * 10) / 10 };
+          const distanceKm =
+            spa.lat != null && spa.lng != null
+              ? Math.round(haversineKm(origin.lat, origin.lng, spa.lat, spa.lng) * 10) / 10
+              : null;
+          return { spa, distanceKm };
         })
         .filter((r) => r.distanceKm !== null)
         .sort((a, b) => a.distanceKm! - b.distanceKm!)

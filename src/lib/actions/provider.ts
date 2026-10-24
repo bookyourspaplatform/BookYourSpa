@@ -1049,7 +1049,7 @@ export async function saveProduct(input: z.infer<typeof productSchema>): Promise
       if (!row || row.providerId !== providerId) return fail('Product not found.');
       await db.update(products).set({ ...payload, updatedAt: new Date() }).where(eq(products.id, parsed.data.id));
       await logAudit({ actorId: user.id, actorRole: user.role, action: 'product.updated', entity: 'product', entityId: parsed.data.id });
-      revalidateProvider(providerId, [`/provider/branches/${parsed.data.branchId}`]);
+      revalidateProvider(providerId, [`/provider/branches/${parsed.data.branchId}`, '/provider/products']);
       return { ok: true, data: { id: parsed.data.id } };
     }
 
@@ -1072,7 +1072,7 @@ export async function setProductActive(productId: string, active: boolean): Prom
     if (!row || row.providerId !== providerId) return fail('Product not found.');
     await db.update(products).set({ active, updatedAt: new Date() }).where(eq(products.id, productId));
     await logAudit({ actorId: user.id, actorRole: user.role, action: 'product.status', entity: 'product', entityId: productId, meta: { active } });
-    revalidateProvider(providerId, [`/provider/branches/${row.branchId}`]);
+    revalidateProvider(providerId, [`/provider/branches/${row.branchId}`, '/provider/products']);
     return { ok: true };
   } catch {
     return fail('Could not update the product.');
@@ -1086,7 +1086,7 @@ export async function deleteProduct(productId: string): Promise<ActionResult> {
     if (!row || row.providerId !== providerId) return fail('Product not found.');
     await db.delete(products).where(eq(products.id, productId));
     await logAudit({ actorId: user.id, actorRole: user.role, action: 'product.deleted', entity: 'product', entityId: productId });
-    revalidateProvider(providerId, [`/provider/branches/${row.branchId}`]);
+    revalidateProvider(providerId, [`/provider/branches/${row.branchId}`, '/provider/products']);
     return { ok: true };
   } catch {
     return fail('Could not delete the product.');

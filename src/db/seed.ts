@@ -574,14 +574,21 @@ export async function runSeed(opts: { force?: boolean } = {}): Promise<void> {
       name: 'Balinese Massage',
       slug: 'balinese-massage',
       category: 'massage',
-      description: 'Our therapists trained in Bali: flowing pressure, acupressure and skin rolling.',
+      description:
+        'Originating from the exotic island of Bali ( Indonesia ), the Balinese massage is a full-body, deep-tissue, holistic treatment. It combines traditional healing practices with influences from Ayurveda, Chinese medicine, and other Asian techniques.',
       durationMin: 60,
       listPrice: 30000,
       currency: 'AED',
-      genre: 'both',
+      priceOptions: [
+        { durationMin: 60, price: 30000, capacity: 2 },
+        { durationMin: 90, price: 42000, capacity: 2 },
+        { durationMin: 120, price: 55000, capacity: 1 },
+      ],
+      genre: 'man_only',
       deliveryType: 'doorstep',
       benefits: ['Full-body relaxation'],
-      tags: ['classic'],
+      tags: ['massages', 'body_treatment'],
+      agentApproved: true,
     },
   ];
 
@@ -643,6 +650,61 @@ export async function runSeed(opts: { force?: boolean } = {}): Promise<void> {
     ...aranjayaTreatments.map((t) => price(ubudId, t.id, ubudPrices[t.id] ?? t.listPrice)),
     ...serenityTreatments.map((t) => price(marinaId, t.id, t.listPrice)),
     ...lotusTreatments.map((t) => price(cangguId, t.id, t.listPrice)),
+  ]);
+
+  /* -------------------------- retail products ------------------------- */
+
+  await db.insert(T.products).values([
+    {
+      id: 'prd_marina_argan',
+      providerId: serenityId,
+      branchId: marinaId,
+      name: 'Argan Body Oil 100ml',
+      description: 'Cold-pressed argan oil used in our hammam ceremonies — take the ritual home.',
+      price: 12000,
+      currency: 'AED',
+      active: true,
+    },
+    {
+      id: 'prd_marina_bath_salts',
+      providerId: serenityId,
+      branchId: marinaId,
+      name: 'Hammam Bath Salts 500g',
+      description: 'Eucalyptus and rosemary salts for a relaxing soak after your treatment.',
+      price: 7500,
+      currency: 'AED',
+      active: true,
+    },
+    {
+      id: 'prd_marina_clay',
+      providerId: serenityId,
+      branchId: marinaId,
+      name: 'Rhassoul Clay Mask 250g',
+      description: 'Moroccan lava clay mask — the same one used in the marble hammam chamber.',
+      price: 9500,
+      currency: 'AED',
+      active: true,
+    },
+    {
+      id: 'prd_orchid_scrub',
+      providerId: aranjayaId,
+      branchId: seminyakId,
+      name: 'Flower Body Scrub Kit',
+      description: 'Frangipani scrub and konjac glove — the Bali Orchid post-bath ritual at home.',
+      price: 185000,
+      currency: 'IDR',
+      active: true,
+    },
+    {
+      id: 'prd_orchid_balm',
+      providerId: aranjayaId,
+      branchId: seminyakId,
+      name: 'Warming Massage Balm 60g',
+      description: 'Ginger and clove balm used by our therapists for shoulder and back work.',
+      price: 120000,
+      currency: 'IDR',
+      active: true,
+    },
   ]);
 
   /* --------------------- therapists & schedules ---------------------- */

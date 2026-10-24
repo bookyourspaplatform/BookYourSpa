@@ -40,8 +40,7 @@ export default async function DealsPage() {
       ),
       orderBy: [asc(promotions.sortOrder)],
       with: {
-        provider: { columns: { name: true, slug: true } },
-        branch: { columns: { name: true, slug: true, providerId: true } },
+        branch: { columns: { name: true, slug: true, providerId: true }, with: { provider: { columns: { slug: true } } } },
       },
     }),
     db.query.coupons.findMany({
@@ -145,11 +144,14 @@ export default async function DealsPage() {
                     {p.summary && <p className="text-[14px] leading-relaxed text-ink-600">{p.summary}</p>}
                     <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[13px]">
                       <span className="text-ink-400">
-                        {p.provider?.name ?? p.branch?.name ?? 'Platform-wide'}
+                        {p.branch?.name ?? 'Platform-wide'}
                         {p.endsAt ? ` · ends ${formatDate(p.endsAt, undefined, { dateStyle: 'medium' })}` : ''}
                       </span>
                       <Link
-                        href={p.linkUrl ?? (p.provider ? `/spas/${p.provider.slug}` : '/spas')}
+                        href={
+                          p.linkUrl ??
+                          (p.branch ? `/spas/${p.branch.provider.slug}/${p.branch.slug}` : '/spas')
+                        }
                         className="font-medium text-brand-700 hover:underline"
                       >
                         View offer →

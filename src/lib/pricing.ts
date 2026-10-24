@@ -82,6 +82,42 @@ export function priceBooking(input: {
   };
 }
 
+/* ------------------------ treatment price options ---------------------- */
+
+export type PriceOptionLike = {
+  durationMin: number;
+  price: number;
+  /** Concurrent-guest capacity for this tier (shared facilities only). */
+  capacity?: number | null;
+};
+
+/**
+ * Pick a duration/price tier by index. Absent, non-integer or out-of-range
+ * indexes return null so every caller falls back to the treatment's
+ * canonical single price/duration — a tampered index can never change what
+ * a booking costs.
+ */
+export function pickPriceOption(
+  options: readonly PriceOptionLike[] | null | undefined,
+  index: number | null | undefined,
+): PriceOptionLike | null {
+  if (typeof index !== 'number' || !Number.isInteger(index) || index < 0) return null;
+  return options?.[index] ?? null;
+}
+
+/**
+ * Re-base a provider-level price option onto the branch's own price for the
+ * same treatment, so per-branch pricing in the price matrix keeps applying to
+ * every duration tier (option 0 maps exactly to the branch price).
+ */
+export function branchOptionPrice(
+  option: PriceOptionLike,
+  listPrice: number,
+  branchPrice: number,
+): number {
+  return Math.max(0, option.price + (branchPrice - listPrice));
+}
+
 /** Coupon validity check shared by quote + booking creation. */
 export function couponApplies(
   coupon: {

@@ -67,7 +67,7 @@ export default async function AccountOverviewPage() {
           <div className="px-5 py-5">
             <p className="text-lg font-medium">{next.treatmentName}</p>
             <p className="mt-0.5 text-sm text-ink-500">
-              {next.providerName} — {next.branch?.name}, {next.branch?.city}
+              {next.branch?.name}, {next.branch?.city}
             </p>
             <p className="mt-2 text-sm text-ink-700">
               {formatDateTime(next.startAt, next.timezone)} ({next.timezone})
@@ -112,7 +112,7 @@ export default async function AccountOverviewPage() {
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium">{b.treatmentName}</p>
                   <p className="truncate text-[13px] text-ink-500">
-                    {formatDate(b.startAt, b.timezone)} · {b.providerName}
+                    {formatDate(b.startAt, b.timezone)} · {b.branch?.name ?? b.providerName}
                   </p>
                 </div>
                 <div className="flex items-center gap-3">

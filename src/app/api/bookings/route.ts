@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '@/db';
 import { agents, branches, payments, treatments } from '@/db/schema';
-import { BookingError, createBooking } from '@/lib/booking';
+import { BookingError, createBookingGroup, type CreateGroupItem } from '@/lib/booking';
 import { getSession } from '@/lib/auth/session';
 import { getSettings } from '@/lib/settings';
 import { appUrl } from '@/lib/seo';
@@ -15,24 +15,45 @@ import { newId } from '@/lib/utils';
 
 export const dynamic = 'force-dynamic';
 
-const schema = z.object({
-  branchId: z.string().min(1),
+const itemSchema = z.object({
   treatmentId: z.string().min(1),
+  optionIndex: z.number().int().min(0).max(9).optional(),
+  persons: z.number().int().min(1).max(8).optional(),
   startAt: z.string().datetime({ offset: true }),
   therapistId: z.string().min(1).nullable().optional(),
-  customer: z.object({
-    name: z.string().trim().min(2, 'Enter the guest name.').max(80),
-    email: z.email('Enter a valid email address.'),
-    phone: z.string().trim().max(30).optional().nullable(),
-  }),
-  couponCode: z.string().trim().max(40).optional().nullable(),
-  notes: z.string().trim().max(500).optional().nullable(),
-  paymentMode: z.enum(['venue', 'online']),
-  gateway: z.enum(['stripe', 'paypal', 'razorpay']).optional(),
 });
 
+const schema = z
+  .object({
+    branchId: z.string().min(1),
+    /** Legacy single-treatment shape. */
+    treatmentId: z.string().min(1).optional(),
+    optionIndex: z.number().int().min(0).max(9).optional(),
+    startAt: z.string().datetime({ offset: true }).optional(),
+    therapistId: z.string().min(1).nullable().optional(),
+    /** Multi-treatment cart shape — wins over the legacy fields. */
+    items: z.array(itemSchema).min(1).max(8).optional(),
+    products: z
+      .array(z.object({ productId: z.string().min(1), quantity: z.number().int().min(1).max(99) }))
+      .max(20)
+      .optional(),
+    customer: z.object({
+      name: z.string().trim().min(2, 'Enter the guest name.').max(80),
+      email: z.email('Enter a valid email address.'),
+      phone: z.string().trim().max(30).optional().nullable(),
+    }),
+    couponCode: z.string().trim().max(40).optional().nullable(),
+    notes: z.string().trim().max(500).optional().nullable(),
+    paymentMode: z.enum(['venue', 'online']),
+    gateway: z.enum(['stripe', 'paypal', 'razorpay']).optional(),
+  })
+  .refine((d) => Boolean(d.items?.length || (d.treatmentId && d.startAt)), {
+    message: 'treatmentId + startAt or items is required.',
+  });
+
 /**
- * POST /api/bookings — creates a reservation and either
+ * POST /api/bookings — creates a reservation (single treatment or a whole
+ * cart, as one booking group) and either
  *   • confirms it for pay-at-venue, or
  *   • returns a hosted-checkout URL for online payment.
  */
@@ -52,6 +73,26 @@ export async function POST(req: Request) {
     return jsonError(issue ? issue.message : 'Invalid booking request.', 422);
   }
   const input = parsed.data;
+
+  // Normalise legacy single-treatment bodies into the cart shape.
+  const items: CreateGroupItem[] = (
+    input.items?.length
+      ? input.items
+      : [
+          {
+            treatmentId: input.treatmentId!,
+            optionIndex: input.optionIndex,
+            startAt: input.startAt!,
+            therapistId: input.therapistId ?? null,
+          },
+        ]
+  ).map((i) => ({
+    treatmentId: i.treatmentId,
+    optionIndex: (i as { optionIndex?: number | null }).optionIndex ?? null,
+    persons: (i as { persons?: number }).persons ?? 1,
+    startAt: new Date(i.startAt),
+    therapistId: (i as { therapistId?: string | null }).therapistId ?? null,
+  }));
 
   const session = await getSession();
   const settings = await getSettings();
@@ -76,11 +117,10 @@ export async function POST(req: Request) {
   }
 
   try {
-    const { booking, quote } = await createBooking(db, {
+    const { primary, bookings: groupRows, quote } = await createBookingGroup(db, {
       branchId: input.branchId,
-      treatmentId: input.treatmentId,
-      startAt: new Date(input.startAt),
-      therapistId: input.therapistId ?? null,
+      items,
+      products: input.products,
       customer: { name: input.customer.name, email: input.customer.email, phone: input.customer.phone ?? null },
       customerId,
       agentId,
@@ -95,24 +135,33 @@ export async function POST(req: Request) {
       actorRole: session?.role ?? null,
       action: 'booking.created',
       entity: 'booking',
-      entityId: booking.id,
+      entityId: primary.id,
       ip,
-      meta: { channel, paymentMode: input.paymentMode, total: booking.totalAmount, currency: booking.currency },
+      meta: {
+        channel,
+        paymentMode: input.paymentMode,
+        total: quote.pricing.total,
+        currency: quote.currency,
+        lines: items.length,
+        products: input.products?.length ?? 0,
+      },
     });
 
     const base = await appUrl('');
+    const firstLine = quote.lines[0];
 
     /* --- pay at the venue --- */
     if (input.paymentMode === 'venue') {
       if (!quote.payment.venue) {
         return jsonError('This branch does not accept pay-at-venue for online reservations.', 400);
       }
-      await emailVoucherForBooking(booking);
+      await emailVoucherForBooking(primary);
       return NextResponse.json({
         ok: true,
-        booking: { id: booking.id, code: booking.code },
+        booking: { id: primary.id, code: primary.code },
+        bookings: groupRows.map((b) => ({ id: b.id, code: b.code })),
         payment: { type: 'venue' },
-        voucherUrl: `${base}/voucher/${booking.code}`,
+        voucherUrl: `${base}/voucher/${primary.code}`,
       });
     }
 
@@ -134,39 +183,40 @@ export async function POST(req: Request) {
     }
 
     const treatmentRow = await db.query.treatments.findFirst({
-      where: eq(treatments.id, input.treatmentId),
+      where: eq(treatments.id, firstLine!.treatmentId),
     });
     if (!treatmentRow) return jsonError('Treatment not found.', 404);
 
     const checkoutInput: CheckoutInput = {
-      booking,
+      booking: primary,
       branch,
       treatment: treatmentRow,
       amountMinor: quote.pricing.total,
       currency: quote.currency,
       baseUrl: base,
-      successUrl: `${base}/voucher/${booking.code}`,
-      cancelUrl: `${base}/spas/${quote.branch.providerSlug}/${quote.branch.slug}/book?treatment=${quote.treatment.id}&cancelled=1`,
-      customerEmail: booking.guestEmail,
+      successUrl: `${base}/voucher/${primary.code}`,
+      cancelUrl: `${base}/spas/${quote.branch.providerSlug}/${quote.branch.slug}/book?treatment=${firstLine!.treatmentId}&cancelled=1`,
+      customerEmail: primary.guestEmail,
     };
 
     const checkout = await gateway.createCheckout(checkoutInput);
 
     await db.insert(payments).values({
       id: newId('pay'),
-      bookingId: booking.id,
+      bookingId: primary.id,
       gateway: gateway.name,
       status: 'pending',
       amount: quote.pricing.total,
       currency: quote.currency,
       externalId: checkout.externalId,
       clientSecret: checkout.clientSecret ?? null,
-      payerEmail: booking.guestEmail,
+      payerEmail: primary.guestEmail,
     });
 
     return NextResponse.json({
       ok: true,
-      booking: { id: booking.id, code: booking.code },
+      booking: { id: primary.id, code: primary.code },
+      bookings: groupRows.map((b) => ({ id: b.id, code: b.code })),
       payment: { type: 'redirect', gateway: gateway.name, checkoutUrl: checkout.url },
     });
   } catch (err) {

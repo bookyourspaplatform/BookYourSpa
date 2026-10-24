@@ -11,11 +11,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const now = new Date();
 
   const db = await getDb();
-  const [providerRows, branchRows, pageRows] = await Promise.all([
-    db
-      .select({ slug: providers.slug, updatedAt: providers.updatedAt })
-      .from(providers)
-      .where(eq(providers.status, 'approved')),
+  const [branchRows, pageRows] = await Promise.all([
+    // Public listings are the outlets (spa businesses) — supplier profiles are
+    // no longer rendered, so they get no sitemap entries.
     db
       .select({ slug: branches.slug, providerSlug: providers.slug, updatedAt: branches.updatedAt })
       .from(branches)
@@ -35,19 +33,12 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     })),
   ];
 
-  const providerRoutes: MetadataRoute.Sitemap = providerRows.map((p) => ({
-    url: `${base}/spas/${p.slug}`,
-    lastModified: p.updatedAt,
-    changeFrequency: 'weekly' as const,
-    priority: 0.8,
-  }));
-
   const branchRoutes: MetadataRoute.Sitemap = branchRows.map((b) => ({
     url: `${base}/spas/${b.providerSlug}/${b.slug}`,
     lastModified: b.updatedAt,
     changeFrequency: 'weekly' as const,
-    priority: 0.7,
+    priority: 0.8,
   }));
 
-  return [...staticRoutes, ...providerRoutes, ...branchRoutes];
+  return [...staticRoutes, ...branchRoutes];
 }

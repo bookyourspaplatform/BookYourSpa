@@ -124,7 +124,10 @@ export default async function SpasPage({ searchParams }: { searchParams: Promise
           searchResultsJsonLd(
             base,
             pageTitle,
-            results.items.map((s) => ({ name: s.name, url: `${base.replace('/spas', '')}/spas/${s.slug}` })),
+            results.items.map((s) => ({
+              name: s.name,
+              url: `${base.replace('/spas', '')}/spas/${s.slug}/${s.branchSlug}`,
+            })),
           ),
         ]}
       />
@@ -250,7 +253,7 @@ export default async function SpasPage({ searchParams }: { searchParams: Promise
                 {[0, 400000, 700000, 1000000].map((p) => (
                   <FilterChip
                     key={p}
-                    label={p === 0 ? 'Any price' : `From provider list · ${p.toLocaleString()}`}
+                    label={p === 0 ? 'Any price' : `Max ${p.toLocaleString()}`}
                     href={buildHref('/spas', { city: sp.city, category: sp.category, spa: sp.spa, type: sp.type, q: sp.q, maxPrice: p ? String(p) : undefined })}
                     active={Number(sp.maxPrice ?? 0) === p}
                   />

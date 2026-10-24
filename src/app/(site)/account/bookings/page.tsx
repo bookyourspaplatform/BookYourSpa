@@ -98,7 +98,7 @@ export default async function AccountBookingsPage({
                     </p>
                     <p className="mt-1 flex items-center gap-1.5 text-[13.5px] text-ink-500">
                       <MapPin className="size-3.5 shrink-0" />
-                      {b.providerName} — {b.branch?.name}, {b.branch?.city}
+                      {b.branch?.name}, {b.branch?.city}
                     </p>
                     {b.status === 'cancelled' && b.cancelReason && (
                       <p className="mt-1.5 text-[13px] text-rose-600">Reason: {b.cancelReason}</p>

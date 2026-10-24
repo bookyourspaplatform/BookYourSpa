@@ -161,7 +161,7 @@ export function TreatmentManager({ treatments, currency }: { treatments: Treatme
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ink-100 px-5 py-4">
         <div>
           <h2 className="text-[16px] font-semibold">Treatment menu</h2>
-          <p className="text-[13px] text-ink-500\">Published treatments appear in search, compare and your listing.</p>
+          <p className="text-[13px] text-ink-500">Published treatments appear in search, compare and your listing.</p>
         </div>
         <button type="button" onClick={openCreate} className={buttonClasses('primary', 'sm')}>
           <Plus className="size-4" /> Add treatment
@@ -172,7 +172,7 @@ export function TreatmentManager({ treatments, currency }: { treatments: Treatme
         <div className="px-6 py-12 text-center">
           <Sparkles className="mx-auto size-8 text-ink-300" />
           <p className="mt-3 text-[15px] font-medium">No treatments yet</p>
-          <p className="mt-1 text-sm text-ink-500\">Create your menu, then set branch prices in the matrix below.</p>
+          <p className="mt-1 text-sm text-ink-500">Create your menu, then set branch prices in the matrix below.</p>
         </div>
       ) : (
         <ul className="divide-y divide-ink-50">
@@ -186,6 +186,14 @@ export function TreatmentManager({ treatments, currency }: { treatments: Treatme
                     <Badge tone={t.deliveryType === 'doorstep' ? 'clay' : 'brand'}>
                       {DELIVERY_TYPE_LABELS[t.deliveryType] ?? t.deliveryType}
                     </Badge>
+                  )}
+                  {t.tags.slice(0, 2).map((tag) => (
+                    <Badge key={tag} tone="neutral">
+                      {SPA_TYPE_LABELS[tag] ?? tag}
+                    </Badge>
+                  ))}
+                  {t.tags.length > 2 && (
+                    <span className="text-[12px] text-ink-400">+{t.tags.length - 2}</span>
                   )}
                   {t.status !== 'active' && <Badge tone="warning">unpublished</Badge>}
                   {!t.requiresTherapist && <Badge tone="info">shared facility</Badge>}
@@ -340,7 +348,7 @@ export function TreatmentManager({ treatments, currency }: { treatments: Treatme
 
         <div className="mt-4">
           <p className="text-[13px] font-semibold text-ink-700">Spa type</p>
-          <p className="mt-0.5 text-[12.5px] text-ink-500\">Shown to guests when they filter the search bar by spa type.</p>
+          <p className="mt-0.5 text-[12.5px] text-ink-500">Shown to guests when they filter the search bar by spa type.</p>
           <div className="mt-2 flex flex-wrap gap-2">
             {SPA_TYPES.map((t) => {
               const on = draft.tags.includes(t);

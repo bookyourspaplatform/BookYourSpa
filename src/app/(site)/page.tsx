@@ -1,8 +1,8 @@
 import Link from 'next/link';
-import { eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { ArrowRight, Clock, LayoutGrid, ShieldCheck, Sparkles, Ticket, MapPin } from 'lucide-react';
 import { getDb } from '@/db';
-import { providers, reviews } from '@/db/schema';
+import { branches, providers, reviews } from '@/db/schema';
 import {
 	listCities,
 	listFeaturedTreatments,
@@ -81,13 +81,19 @@ export default async function HomePage() {
 		.slice(0, 4);
 
 	// Hero stats — real platform numbers where they exist.
-	const [spaCount, countryCount, reviewCount] = await Promise.all([
-    db.$count(providers, eq(providers.status, 'approved')),
+	// Public listings = active outlets under approved suppliers.
+	const [outletCount, countryCount, reviewCount] = await Promise.all([
+    db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(branches)
+      .innerJoin(providers, eq(providers.id, branches.providerId))
+      .where(and(eq(branches.status, 'active'), eq(providers.status, 'approved')))
+      .then((r) => r[0]?.n ?? 0),
     Promise.resolve(new Set(cities.map((c) => c.country)).size),
     db.$count(reviews, eq(reviews.status, 'published')),
   ]);
 	const stats: HeroStat[] = [
-		{ icon: 'globe', value: `${spaCount}+`, label: t(lang, 'stats.spas') },
+		{ icon: 'globe', value: `${outletCount}+`, label: t(lang, 'stats.spas') },
 		{ icon: 'users', value: `${Math.max(reviewCount * 12, 250)}+`, label: t(lang, 'stats.guests') },
 		{ icon: 'pin', value: `${Math.max(countryCount, 2)}+`, label: t(lang, 'stats.countries') },
 		{ icon: 'shield', value: '100%', label: t(lang, 'stats.reviews') },

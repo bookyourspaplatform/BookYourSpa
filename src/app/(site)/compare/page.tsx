@@ -54,7 +54,7 @@ export default async function ComparePage() {
         city: r.branch.city,
         country: r.branch.country,
       },
-      provider: { name: r.branch.provider.name, slug: r.branch.provider.slug },
+      provider: { slug: r.branch.provider.slug },
     }))
     .sort((a, b) => a.price - b.price);
 

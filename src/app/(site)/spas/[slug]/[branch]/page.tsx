@@ -1,20 +1,94 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { Clock, MapPin, Navigation, Phone, UserRound } from 'lucide-react';
+import { Mail, MapPin, Sparkles, Star } from 'lucide-react';
 import { getDb } from '@/db';
-import { getBranchDetail, CATEGORY_LABELS, SPA_CATEGORY_LABELS, SPA_FACILITY_LABELS, SPA_TYPE_LABELS } from '@/lib/catalog';
+import {
+  getBranchDetail,
+  listSpas,
+  CATEGORY_LABELS,
+  SPA_CATEGORY_LABELS,
+  SPA_FACILITY_LABELS,
+  SPA_TYPE_LABELS,
+  GENRE_LABELS,
+  DELIVERY_TYPE_LABELS,
+} from '@/lib/catalog';
+import { branchOptionPrice } from '@/lib/pricing';
+import { getCurrentUser } from '@/lib/auth/session';
+import { findClaimForUser } from '@/lib/claims';
+import { getSettings } from '@/lib/settings';
 import { sanitizeRichText, stripHtml } from '@/lib/security';
 import { appUrl, breadcrumbJsonLd, daySpaJsonLd, pageMetadata, treatmentJsonLd } from '@/lib/seo';
 import { JsonLd } from '@/components/json-ld';
 import { Badge } from '@/components/ui/badge';
-import { buttonClasses } from '@/components/ui/button';
 import { formatMoney } from '@/lib/money';
-import { formatDate } from '@/lib/utils';
+import { dateKeyInTz, formatDate } from '@/lib/utils';
+import { SpaCard, priceLevel } from '@/components/site/spa-card';
+import { ClaimSpaCard, type ClaimSpaState } from '@/components/site/claim-spa-card';
 
 export const dynamic = 'force-dynamic';
 
-const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const GRADIENTS = [
+  'from-brand-700 via-brand-600 to-clay-500',
+  'from-clay-600 via-clay-500 to-amber-400',
+  'from-brand-800 via-brand-500 to-brand-300',
+  'from-ink-800 via-brand-700 to-clay-400',
+];
+
+const COUNTRY_NAMES: Record<string, string> = {
+  ID: 'Indonesia',
+  AE: 'United Arab Emirates',
+  SG: 'Singapore',
+  TH: 'Thailand',
+  MY: 'Malaysia',
+  IN: 'India',
+  GB: 'United Kingdom',
+  US: 'United States',
+  AU: 'Australia',
+};
+
+const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+const PAYMENT_LABELS: Record<string, string> = {
+  stripe: 'Visa / Mastercard (Stripe)',
+  paypal: 'PayPal',
+  razorpay: 'Razorpay / e-wallet',
+  venue: 'Pay at the venue',
+};
+
+/** Solid green action button — matches the sample design (rounded-xl, not a pill). */
+const GREEN_BTN =
+  'inline-flex items-center justify-center gap-2 rounded-xl bg-brand-700 px-6 font-semibold text-white shadow-sm transition hover:bg-brand-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600 disabled:opacity-50';
+
+function initialsOf(name: string) {
+  return name.split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
+}
+
+function HighlightHeading({ id, children }: { id?: string; children: React.ReactNode }) {
+  return (
+    <h2 id={id} className="text-2xl text-ink-900">
+      <span className="box-decoration-clone rounded-md bg-sand-200/70 px-2.5 py-1">{children}</span>
+    </h2>
+  );
+}
+
+function Stars({ value }: { value: number }) {
+  const filled = Math.round(value);
+  return (
+    <span className="inline-flex items-center gap-0.5" role="img" aria-label={`${value} out of 5 stars`}>
+      {[0, 1, 2, 3, 4].map((i) => (
+        <Star
+          key={i}
+          className={
+            i < filled
+              ? 'size-4 fill-amber-400 text-amber-400'
+              : 'size-4 fill-ink-200 text-ink-200'
+          }
+        />
+      ))}
+    </span>
+  );
+}
 
 export async function generateMetadata({
   params,
@@ -26,14 +100,13 @@ export async function generateMetadata({
   const detail = await getBranchDetail(db, slug, branch);
   if (!detail) return { title: 'Branch not found' };
   const b = detail.branch;
-  const provider = b.provider;
   return pageMetadata({
-    title: `${b.name} branch — ${provider.name}, ${b.city}`,
+    title: `${b.name} — ${b.city}`,
     description:
       b.shortDescription?.trim() ||
-      `${provider.name} in ${b.city}. View treatments, prices and therapists, check live availability and book instantly.`,
+      `${b.name} in ${b.city}. View treatments, prices and therapists, check live availability and book instantly.`,
     path: `/spas/${slug}/${branch}`,
-    keywords: [`${b.city} spa`, `${b.city} massage`, `${provider.name} ${b.name}`],
+    keywords: [`${b.city} spa`, `${b.city} massage`, b.name],
   });
 }
 
@@ -51,22 +124,22 @@ export default async function BranchDetailPage({
   if (!detail) notFound();
 
   const b = detail.branch;
-  const provider = b.provider;
-  const { treatments, therapistList, promos } = detail;
+  const { treatments, therapistList, promos, rating, reviews } = detail;
   const base = await appUrl('');
   const url = `${base}/spas/${slug}/${branch}`;
 
+  const settings = await getSettings();
+  const user = await getCurrentUser();
+  const cancelHours = settings['booking.cancellationHours'];
+  const supportEmail = settings['site.supportEmail'];
+
   const today = new Date();
-  const hours = b.hours.length
-    ? b.hours
-        .slice()
-        .sort((x, y) => x.day - y.day)
-        .map((h) => ({ ...h, label: `${DAY_NAMES[h.day]} ${h.closed ? 'Closed' : `${h.open} – ${h.close}`}` }))
-    : [];
+  const todayKey = dateKeyInTz(today, b.timezone);
+  const todayIdx = new Date(`${todayKey}T12:00:00Z`).getUTCDay();
 
   const jsonLd = [
     daySpaJsonLd({
-      name: `${provider.name} — ${b.name}`,
+      name: b.name,
       url,
       description: b.description ? stripHtml(b.description) : undefined,
       priceRange: treatments.length ? formatMoney(treatments[0]!.price, b.currency) : undefined,
@@ -79,7 +152,6 @@ export default async function BranchDetailPage({
       [
         { name: 'Home', path: '/' },
         { name: 'Spas', path: '/spas' },
-        { name: provider.name, path: `/spas/${slug}` },
         { name: b.name, path: `/spas/${slug}/${branch}` },
       ],
       base,
@@ -93,324 +165,637 @@ export default async function BranchDetailPage({
         duration: `${t.durationMin} minutes`,
         price: t.price,
         currency: b.currency,
-        providerName: `${provider.name} ${b.name}`,
+        providerName: b.name,
       }),
     ),
   ];
+
+  /* ---------- title block values ---------- */
+  const categoryKey = b.categories[0] ?? b.spaTypes[0] ?? null;
+  const categoryLabel = categoryKey
+    ? SPA_CATEGORY_LABELS[categoryKey] ??
+      SPA_TYPE_LABELS[categoryKey] ??
+      CATEGORY_LABELS[categoryKey] ??
+      categoryKey
+    : null;
+  const countryName = COUNTRY_NAMES[b.country] ?? b.country;
+  const locationText = [b.city, b.region, countryName].filter(Boolean).join(', ');
+  const minPrice = treatments.length ? Math.min(...treatments.map((t) => t.price)) : null;
+  const level = priceLevel(minPrice, b.currency);
+  const featured = detail.featured;
+  const tagline = b.tagline?.trim() || null;
+  const intro = b.shortDescription?.trim() || null;
+
+  /* ---------- gallery ---------- */
+  const gallery = [
+    ...b.images,
+    ...treatments.map((t) => t.imageUrl),
+  ]
+    .filter((src): src is string => Boolean(src))
+    .filter((src, i, arr) => arr.indexOf(src) === i);
+  const photos = gallery.slice(0, 5);
+  const sidePhotos = photos.slice(1, 5);
+  const extraPhotos = Math.max(0, gallery.length - photos.length);
+  const gradient = GRADIENTS[slug.length % GRADIENTS.length];
+
+  /* ---------- facilities ---------- */
+  const facilities = [...new Set(b.facilities)];
+
+  /* ---------- hours (today highlighted) ---------- */
+  const hourRows = DAY_LABELS.map((label, day) => {
+    const h = b.hours.find((x) => x.day === day);
+    const open = Boolean(h && !h.closed);
+    return {
+      label,
+      open,
+      text: open ? `${h!.open} – ${h!.close}` : 'Closed',
+      today: day === todayIdx,
+    };
+  });
+
+  const paymentText = [...new Set(b.paymentMethods)]
+    .map((m) => PAYMENT_LABELS[m] ?? m)
+    .join(', ');
+
+  /* ---------- map ---------- */
+  const lat = b.lat ? Number(b.lat) : null;
+  const lng = b.lng ? Number(b.lng) : null;
+  const hasCoords = lat !== null && lng !== null && Number.isFinite(lat) && Number.isFinite(lng);
+  const mapsHref =
+    b.googleMapsUrl ??
+    (hasCoords
+      ? `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`
+      : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+          [b.addressLine, b.city, b.country].filter(Boolean).join(', '),
+        )}`);
+
+  /* ---------- claim + related ---------- */
+  const myClaim =
+    user && !b.provider.ownerId ? await findClaimForUser(db, b.provider.id, user.id) : null;
+  const claimState: ClaimSpaState | null = b.provider.ownerId
+    ? null
+    : !user
+      ? 'signed_out'
+      : myClaim
+        ? 'pending'
+        : 'ready';
+
+  const related = (await listSpas(db, { pageSize: 48, sort: 'featured' }))
+    .items.filter((s) => s.id !== b.id)
+    .sort((x, y) => Number(y.country === b.country) - Number(x.country === b.country))
+    .slice(0, 3);
+
+  const bookHref = `/spas/${slug}/${branch}/book`;
 
   return (
     <>
       <JsonLd data={jsonLd} />
 
-      <section className="border-b border-ink-100 bg-brand-900 text-white">
-        <div className="mx-auto max-w-7xl px-4 py-9 sm:px-6 lg:px-8">
-          <nav className="mb-4 text-[13px] text-white/70" aria-label="Breadcrumb">
-            <Link href="/spas" className="hover:underline">
-              Spas
-            </Link>{' '}
-            /{' '}
-            <Link href={`/spas/${slug}`} className="hover:underline">
-              {provider.name}
-            </Link>{' '}
-            / {b.name}
-          </nav>
-          <div className="flex flex-wrap items-start justify-between gap-5">
-            <div>
-              <h1 className="text-3xl text-white sm:text-4xl">
-                {provider.name} — {b.name}
-              </h1>
-              <p className="mt-2 flex items-start gap-1.5 text-[14.5px] text-brand-100/85">
-                <MapPin className="mt-0.5 size-4 shrink-0" /> {b.addressLine}, {b.city}
-                {b.region ? `, ${b.region}` : ''}
-              </p>
-              <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1.5 text-[13.5px] text-brand-100/85">
-                <span className="inline-flex items-center gap-1.5">
-                  <Clock className="size-4" /> {hours[0] ? `Daily ${b.hours[0]!.open}–${b.hours[0]!.close}` : 'See hours'}
-                </span>
-                {b.phone && (
-                  <span className="inline-flex items-center gap-1.5">
-                    <Phone className="size-4" /> {b.phone}
+      <div className="mx-auto max-w-7xl space-y-6 px-4 pb-14 pt-6 sm:px-6 lg:px-8">
+        {/* Photo gallery */}
+        <section aria-label="Photos" className="overflow-hidden rounded-3xl border border-ink-100">
+          <div className="grid grid-cols-2 gap-1.5 md:h-[430px] md:grid-cols-4 md:grid-rows-2">
+            <div className="relative col-span-2 h-60 md:col-span-2 md:row-span-2 md:h-auto">
+              {photos[0] ? (
+                // eslint-disable-next-line @next/next/no-img-element -- branch uploads may be data URLs
+                <img
+                  src={photos[0]}
+                  alt={`${b.name} — photo`}
+                  className="absolute inset-0 size-full object-cover"
+                />
+              ) : (
+                <div
+                  className={`absolute inset-0 flex items-center justify-center bg-gradient-to-br ${gradient}`}
+                >
+                  <span className="font-display text-6xl text-white/90">
+                    {initialsOf(b.name)}
                   </span>
-                )}
-                {b.showTherapistOnline && (
-                  <span className="inline-flex items-center gap-1.5">
-                    <UserRound className="size-4" /> {therapistList.length} therapists
+                </div>
+              )}
+            </div>
+            {sidePhotos.map((src, i) => (
+              <div key={src} className="relative h-32 md:h-auto">
+                {/* eslint-disable-next-line @next/next/no-img-element -- branch uploads may be data URLs */}
+                <img
+                  src={src}
+                  alt=""
+                  loading="lazy"
+                  className="absolute inset-0 size-full object-cover"
+                />
+                {i === sidePhotos.length - 1 && extraPhotos > 0 && (
+                  <span className="absolute bottom-2 right-2 rounded-full bg-black/65 px-2.5 py-1 text-[11.5px] font-medium text-white">
+                    +{extraPhotos} more photos
                   </span>
                 )}
               </div>
-              {b.tagline && <p className="mt-3 text-[17px] font-medium text-white">{b.tagline}</p>}
-              {b.shortDescription && <p className="mt-1 max-w-xl text-[14px] leading-relaxed text-brand-100/80">{b.shortDescription}</p>}
-              {(b.categories.length > 0 || b.spaTypes.length > 0 || b.doorstepService) && (
-                <div className="mt-3 flex flex-wrap gap-1.5">
-                  {b.doorstepService && (
-                    <span className="rounded-full border border-clay-300/40 bg-clay-600/30 px-2.5 py-0.5 text-[11.5px] font-medium text-clay-100">
-                      Massage on Call / Doorstep
-                    </span>
-                  )}
-                  {b.categories.map((c) => (
-                    <span key={c} className="rounded-full border border-white/15 bg-white/10 px-2.5 py-0.5 text-[11.5px] text-brand-100">
-                      {SPA_CATEGORY_LABELS[c] ?? c}
-                    </span>
-                  ))}
-                  {b.spaTypes.slice(0, 6).map((t) => (
-                    <span key={t} className="rounded-full border border-white/15 bg-white/10 px-2.5 py-0.5 text-[11.5px] text-brand-100">
-                      {SPA_TYPE_LABELS[t] ?? t}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="flex flex-col gap-2">
-              <Link href={`/spas/${slug}/${branch}/book`} className={buttonClasses('secondary', 'lg')}>
-                Book now
-              </Link>
-              {b.lat && b.lng && (
-                <a
-                  href={`https://www.google.com/maps/search/?api=1&query=${b.lat},${b.lng}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={buttonClasses('outlineLight', 'sm')}
-                >
-                  <Navigation className="size-3.5" /> Directions
-                </a>
-              )}
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <div className="mx-auto max-w-7xl gap-8 px-4 py-9 sm:px-6 lg:flex lg:px-8">
-        <div className="min-w-0 flex-1">
-          {promos.length > 0 && (
-            <div className="mb-6 rounded-2xl border border-clay-200 bg-clay-50 p-4">
-              {promos.map((p) => (
-                <div key={p.id} className="flex items-start gap-3 py-1.5">
-                  <Badge tone="clay">Offer</Badge>
-                  <div>
-                    <p className="text-[14.5px] font-medium text-clay-900">{p.title}</p>
-                    {p.summary && <p className="text-[13.5px] text-clay-800/80">{p.summary}</p>}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Photos */}
-          {b.images.length > 0 && (
-            <section className="mb-7" aria-label="Photos">
-              {/* eslint-disable-next-line @next/next/no-img-element -- branch covers may be data URLs */}
-              <img
-                src={b.images[0]!}
-                alt={`${b.name} cover`}
-                className="h-56 w-full rounded-2xl border border-ink-100 object-cover sm:h-72"
+            ))}
+            {Array.from({ length: Math.max(0, 4 - sidePhotos.length) }).map((_, i) => (
+              <div
+                key={`ph-${i}`}
+                className={`h-32 bg-gradient-to-br opacity-90 md:h-auto ${GRADIENTS[(i + 2) % GRADIENTS.length]}`}
               />
-              {b.images.length > 1 && (
-                <div className="mt-2 grid grid-cols-4 gap-2 sm:grid-cols-6">
-                  {b.images.slice(1, 7).map((src, i) => (
-                    /* eslint-disable-next-line @next/next/no-img-element */
-                    <img
-                      key={i}
-                      src={src}
-                      alt={`${b.name} photo ${i + 2}`}
-                      className="aspect-square w-full rounded-lg border border-ink-100 object-cover"
-                      loading="lazy"
-                    />
-                  ))}
-                </div>
-              )}
-            </section>
-          )}
-
-          {/* About */}
-          {(b.description || b.facilities.length > 0) && (
-            <section className="mb-7" aria-labelledby="about-heading">
-              <h2 id="about-heading" className="text-2xl">
-                About {b.name}
-              </h2>
-              {b.description && (
-                <div
-                  className="mt-3 max-w-none text-[14.5px] leading-relaxed text-ink-600 [&_a]:text-brand-700 [&_a]:underline [&_h2]:mt-4 [&_h2]:text-lg [&_h2]:font-semibold [&_h3]:mt-3 [&_h3]:text-base [&_h3]:font-semibold [&_li]:my-0.5 [&_p]:my-2 [&_ul]:list-disc [&_ul]:pl-5"
-                  dangerouslySetInnerHTML={{ __html: sanitizeRichText(b.description) }}
-                />
-              )}
-              {b.facilities.length > 0 && (
-                <div className="mt-4 flex flex-wrap gap-2">
-                  {b.facilities.map((f) => (
-                    <span key={f} className="rounded-full border border-ink-100 bg-white px-3 py-1 text-[12.5px] text-ink-600">
-                      {SPA_FACILITY_LABELS[f] ?? f}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </section>
-          )}
-
-          <h2 className="text-2xl">Treatments & prices</h2>
-          <p className="mt-1 text-sm text-ink-500">Prices in {b.currency}. Availability is live per therapist.</p>
-
-          <div className="mt-4 space-y-3">
-            {treatments.map((t) => {
-              const highlighted = highlightTreatment === t.id;
-              return (
-                <div
-                  key={t.id}
-                  id={`t-${t.id}`}
-                  className={`scroll-mt-24 rounded-2xl border bg-white p-4 transition sm:p-5 ${
-                    highlighted ? 'border-brand-400 ring-2 ring-brand-200' : 'border-ink-100'
-                  }`}
-                >
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="text-[16.5px] font-medium">{t.name}</h3>
-                        <Badge tone="brand">{CATEGORY_LABELS[t.category] ?? t.category}</Badge>
-                        {!t.requiresTherapist && <Badge tone="info">Shared facility</Badge>}
-                      </div>
-                      {t.description && (
-                        <div
-                          className="prose prose-sm mt-1.5 max-w-none text-[14px] leading-relaxed text-ink-600 [&_p]:my-1 [&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-5 [&_a]:text-brand-700 [&_a]:underline"
-                          dangerouslySetInnerHTML={{ __html: sanitizeRichText(t.description) }}
-                        />
-                      )}
-                      <div className="mt-2 flex flex-wrap gap-1.5">
-                        {t.benefits.map((ben) => (
-                          <span key={ben} className="rounded-full bg-sand-100 px-2.5 py-0.5 text-[12px] text-ink-600">
-                            {ben}
-                          </span>
-                        ))}
-                      </div>
-                      <p className="mt-2 text-[13px] text-ink-400">{t.durationMin} minutes</p>
-                    </div>
-                    <div className="flex shrink-0 items-center justify-between gap-4 border-t border-ink-100 pt-3 sm:flex-col sm:items-end sm:border-0 sm:pt-0">
-                      <p className="text-xl font-semibold text-brand-800">{formatMoney(t.price, b.currency)}</p>
-                      <Link
-                        href={`/spas/${slug}/${branch}/book?treatment=${t.id}`}
-                        className={buttonClasses('primary', 'md')}
-                      >
-                        Book this treatment
-                      </Link>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-            {treatments.length === 0 && (
-              <p className="rounded-2xl border border-dashed border-ink-200 bg-white p-8 text-center text-sm text-ink-500">
-                This branch has not published its menu yet.
-              </p>
-            )}
+            ))}
           </div>
+        </section>
 
-          {b.showTherapistOnline && therapistList.length > 0 && (
-            <section className="mt-9" aria-labelledby="team-heading">
-              <h2 id="team-heading" className="text-2xl">
-                Therapists
-              </h2>
-              <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {therapistList.map((t) => (
-                  <div key={t.id} className="flex items-start gap-3 rounded-2xl border border-ink-100 bg-white p-4">
-                    {t.avatarUrl ? (
-                      /* eslint-disable-next-line @next/next/no-img-element -- staff photo uploaded by the spa */
-                      <img
-                        src={t.avatarUrl}
-                        alt={t.name}
-                        className="size-10 shrink-0 rounded-full border border-ink-100 object-cover"
-                      />
-                    ) : (
-                      <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-brand-100 font-display text-brand-800">
-                        {t.name
-                          .split(/\s+/)
-                          .slice(0, 2)
-                          .map((w) => w[0])
-                          .join('')}
+        <div className="gap-8 lg:flex">
+          {/* ------------------------------ main ------------------------------ */}
+          <main className="min-w-0 flex-1 space-y-10">
+            {/* Title block */}
+            <header>
+              <p className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-[14px] text-ink-500">
+                <MapPin className="size-4 text-clay-500" />
+                {categoryLabel && <span className="font-medium text-ink-700">{categoryLabel}</span>}
+                <span aria-hidden>·</span>
+                <span>{locationText}</span>
+                {level && (
+                  <>
+                    <span aria-hidden>·</span>
+                    <span className="font-semibold text-ink-600">{level}</span>
+                  </>
+                )}
+                {featured && <Badge tone="warning">Featured</Badge>}
+              </p>
+
+              <h1 className="mt-2 text-4xl font-bold leading-[1.06] tracking-tight text-ink-900 sm:text-5xl">
+                {b.name}
+              </h1>
+              {tagline && (
+                <p className="mt-2 text-[17px] font-semibold text-ink-800">{tagline}</p>
+              )}
+              {intro && (
+                <p className="mt-1.5 max-w-3xl text-[15px] leading-relaxed text-ink-600">{intro}</p>
+              )}
+
+              <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[14.5px]">
+                {rating ? (
+                  <>
+                    <span className="flex items-center gap-1.5">
+                      <Stars value={rating.avg} />
+                      <span className="font-semibold text-ink-800">{rating.avg.toFixed(1)}</span>
+                      <a
+                        href="#reviews"
+                        className="text-ink-500 underline-offset-2 hover:text-brand-700 hover:underline"
+                      >
+                        ({rating.count} reviews)
+                      </a>
+                    </span>
+                    {minPrice !== null && (
+                      <span className="text-ink-500">
+                        From{' '}
+                        <span className="font-semibold text-ink-800">
+                          {formatMoney(minPrice, b.currency)}
+                        </span>
                       </span>
                     )}
-                    <div className="min-w-0">
-                      <p className="text-[14.5px] font-medium">{t.name}</p>
-                      {t.bio && <p className="mt-0.5 line-clamp-2 text-[13px] text-ink-500">{t.bio}</p>}
-                      <div className="mt-1.5 flex flex-wrap gap-1">
-                        {t.specialties.map((s) => (
-                          <span key={s} className="rounded-full bg-sand-100 px-2 py-0.5 text-[11px] text-ink-600">
-                            {s}
-                          </span>
-                        ))}
+                  </>
+                ) : (
+                  <>
+                    <span className="text-ink-400">New · no reviews yet</span>
+                    {minPrice !== null && (
+                      <span className="text-ink-500">
+                        From{' '}
+                        <span className="font-semibold text-ink-800">
+                          {formatMoney(minPrice, b.currency)}
+                        </span>
+                      </span>
+                    )}
+                  </>
+                )}
+              </div>
+            </header>
+
+            {/* Offers */}
+            {promos.length > 0 && (
+              <section
+                className="rounded-3xl border border-clay-200 bg-clay-50/60 p-4 sm:p-5"
+                aria-label="Current offers"
+              >
+                <ul className="space-y-3.5">
+                  {promos.slice(0, 3).map((p) => (
+                    <li key={p.id} className="flex gap-3">
+                      <span className="mt-0.5 h-fit shrink-0 rounded-full border border-clay-300 bg-white px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-clay-700">
+                        Offer
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-[14px] font-semibold text-ink-900">{p.title}</p>
+                        {p.summary && (
+                          <p className="mt-0.5 text-[13px] leading-relaxed text-ink-600">
+                            {p.summary}
+                          </p>
+                        )}
                       </div>
-                    </div>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            {/* About */}
+            {(b.description || facilities.length > 0) && (
+              <section aria-labelledby="about-heading">
+                <HighlightHeading id="about-heading">About {b.name}</HighlightHeading>
+                {b.description && (
+                  <div className="mt-4 max-w-3xl text-[15px] leading-relaxed text-ink-600 [&_a]:text-brand-700 [&_a]:underline [&_h2]:mt-4 [&_h2]:text-lg [&_h2]:font-semibold [&_h3]:mt-3 [&_h3]:text-base [&_h3]:font-semibold [&_li]:my-0.5 [&_p]:my-2.5 [&_ul]:list-disc [&_ul]:pl-5">
+                    <div dangerouslySetInnerHTML={{ __html: sanitizeRichText(b.description) }} />
                   </div>
-                ))}
+                )}
+                {facilities.length > 0 && (
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {facilities.map((f) => (
+                      <span
+                        key={f}
+                        className="rounded-full border border-ink-200 bg-white px-3 py-1 text-[12.5px] text-ink-600"
+                      >
+                        {SPA_FACILITY_LABELS[f] ?? f}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </section>
+            )}
+
+            {/* Opening hours + Good to know */}
+            <div className="grid gap-8 sm:grid-cols-2">
+              {hourRows.length > 0 && (
+                <section aria-labelledby="hours-heading">
+                  <h2 id="hours-heading" className="text-xl font-semibold text-ink-900">
+                    Opening hours
+                  </h2>
+                  <ul className="mt-3 text-[13.5px]">
+                    {hourRows.map((r) => (
+                      <li key={r.label} className="flex items-center justify-between py-1.5">
+                        <span className={r.today ? 'font-semibold text-ink-800' : 'text-ink-600'}>
+                          {r.label}
+                          {r.today && <span className="font-normal text-ink-400"> · today</span>}
+                        </span>
+                        <span
+                          className={`tabular-nums ${
+                            r.open
+                              ? r.today
+                                ? 'font-semibold text-ink-800'
+                                : 'text-ink-600'
+                              : 'text-ink-400'
+                          }`}
+                        >
+                          {r.text}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
+
+              <section aria-labelledby="gtk-heading">
+                <h2 id="gtk-heading" className="text-xl font-semibold text-ink-900">
+                  Good to know
+                </h2>
+                <div className="mt-3 space-y-3 text-[13.5px] leading-relaxed text-ink-600">
+                  <p>
+                    <span className="font-semibold text-ink-800">Booking Confirmation:</span> Your
+                    reservation is confirmed once you receive a booking confirmation or voucher.
+                  </p>
+                  <p>
+                    <span className="font-semibold text-ink-800">Contact the Spa:</span> To check
+                    your booking status, change your booking, or share special requirements, contact
+                    the spa as early as possible.
+                  </p>
+                  <p>
+                    <span className="font-semibold text-ink-800">Please Arrive Early:</span> Arrive
+                    10–15 minutes before your scheduled treatment to complete check-in and relax
+                    before your session.
+                  </p>
+                  <p>
+                    <span className="font-semibold text-ink-800">Cancellation:</span> Free
+                    cancellation up to {cancelHours} hours before your appointment. Later
+                    cancellations are charged 50%; no-shows are charged in full.
+                  </p>
+                  {paymentText && (
+                    <p>
+                      <span className="font-semibold text-ink-800">Payment:</span> {paymentText}
+                    </p>
+                  )}
+                </div>
+              </section>
+            </div>
+
+            {/* Treatments & prices */}
+            <section id="treatments" aria-labelledby="treatments-heading" className="scroll-mt-24">
+              <HighlightHeading id="treatments-heading">Treatments &amp; prices</HighlightHeading>
+              <p className="mt-2 text-[13.5px] text-ink-500">
+                Prices in {b.currency}. Availability is live per therapist.
+              </p>
+
+              <div className="mt-4 space-y-4">
+                {treatments.map((t) => {
+                  const highlighted = highlightTreatment === t.id;
+                  // Duration tiers re-based onto this branch's own price, so
+                  // what guests see here matches what checkout charges.
+                  const options = (t.priceOptions ?? []).map((o, i) => ({
+                    index: i,
+                    durationMin: o.durationMin,
+                    price: branchOptionPrice(o, t.listPrice, t.price),
+                  }));
+                  const multi = options.length > 1;
+                  const fromPrice = options.length ? Math.min(...options.map((o) => o.price)) : t.price;
+                  // Only recognised spa-type tags are shown; legacy free-form
+                  // tags fall back to the treatment's category badge.
+                  const spaTypeTags = t.tags.filter((tag) => Boolean(SPA_TYPE_LABELS[tag]));
+                  return (
+                    <article
+                      key={t.id}
+                      id={`t-${t.id}`}
+                      className={`flex scroll-mt-24 flex-col gap-4 rounded-3xl border bg-white p-5 transition hover:border-brand-200 hover:shadow-sm sm:flex-row sm:items-start sm:justify-between ${
+                        highlighted ? 'border-brand-400 ring-2 ring-brand-200' : 'border-ink-100'
+                      }`}
+                    >
+                      <div className="min-w-0 max-w-2xl">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="text-[17px] font-semibold text-ink-900">{t.name}</h3>
+                          {spaTypeTags.length > 0 ? (
+                            spaTypeTags.slice(0, 4).map((tag) => (
+                              <Badge key={tag} tone="brand">{SPA_TYPE_LABELS[tag]}</Badge>
+                            ))
+                          ) : (
+                            <Badge tone="brand">{CATEGORY_LABELS[t.category] ?? t.category}</Badge>
+                          )}
+                        </div>
+                        {t.description && (
+                          <div className="mt-1.5 [&:has(details[open])_p]:line-clamp-none">
+                            <p className="text-[13.5px] leading-relaxed text-ink-600 line-clamp-2">
+                              {stripHtml(t.description)}
+                            </p>
+                            <details className="group mt-1">
+                              <summary className="inline-flex cursor-pointer list-none items-center gap-1 text-[13px] font-medium text-brand-700 transition hover:text-brand-800 [&::-webkit-details-marker]:hidden">
+                                <span className="group-open:hidden">View more ↓</span>
+                                <span className="hidden group-open:inline">Show less ↑</span>
+                              </summary>
+                            </details>
+                          </div>
+                        )}
+                        {t.benefits.length > 0 && (
+                          <div className="mt-2.5 flex flex-wrap gap-1.5">
+                            {t.benefits.slice(0, 2).map((ben) => (
+                              <span
+                                key={ben}
+                                className="rounded-md bg-sand-100 px-2 py-0.5 text-[11.5px] text-ink-600"
+                              >
+                                {ben}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                          {(options.length ? options.map((o) => `${o.durationMin} min`) : [`${t.durationMin} min`]).map(
+                            (label) => (
+                              <span
+                                key={label}
+                                className="rounded-lg bg-ink-100 px-2.5 py-1 text-[12.5px] font-medium text-ink-600"
+                              >
+                                {label}
+                              </span>
+                            ),
+                          )}
+                          {t.genre !== 'both' && (
+                            <Badge tone="info">{GENRE_LABELS[t.genre] ?? t.genre}</Badge>
+                          )}
+                          {t.deliveryType !== 'both' && (
+                            <Badge tone={t.deliveryType === 'doorstep' ? 'clay' : 'neutral'}>
+                              {DELIVERY_TYPE_LABELS[t.deliveryType] ?? t.deliveryType}
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 flex-col items-start gap-3 sm:items-end">
+                        <p className="text-[15px] text-ink-500">
+                          {multi && <span>From </span>}
+                          <span className="text-xl font-bold tabular-nums text-ink-900">
+                            {formatMoney(fromPrice, b.currency)}
+                          </span>
+                        </p>
+                        <Link
+                          href={`/spas/${slug}/${branch}/book?treatment=${t.id}`}
+                          className={`${GREEN_BTN} h-10 px-5 text-[13.5px]`}
+                        >
+                          Book this treatment
+                        </Link>
+                      </div>
+                    </article>
+                  );
+                })}
+                {treatments.length === 0 && (
+                  <p className="rounded-3xl border border-dashed border-ink-200 bg-white p-8 text-center text-sm text-ink-500">
+                    Menu coming soon.
+                  </p>
+                )}
               </div>
             </section>
-          )}
-        </div>
 
-        <aside className="mt-8 w-full shrink-0 lg:mt-0 lg:w-80">
-          <div className="rounded-2xl border border-ink-100 bg-white p-5">
-            <h3 className="text-[15px] font-semibold">Opening hours</h3>
-            <ul className="mt-3 space-y-1.5 text-[13.5px]">
-              {hours.map((h) => (
-                <li key={h.day} className="flex items-center justify-between gap-3 text-ink-600">
-                  <span>{DAY_NAMES[h.day]}</span>
-                  <span className={h.closed ? 'text-rose-600' : 'font-medium text-ink-800'}>
-                    {h.closed ? 'Closed' : `${h.open} – ${h.close}`}
-                  </span>
-                </li>
-              ))}
-              {hours.length === 0 && <li className="text-ink-500">Hours to be confirmed.</li>}
-            </ul>
-            <div className="mt-4 border-t border-ink-100 pt-4 text-[13.5px] text-ink-600">
-              <p>
-                <span className="text-ink-400">Timezone:</span> {b.timezone}
+            {/* Therapists — only when the spa business shows its team online */}
+            {b.showTherapistOnline && therapistList.length > 0 && (
+              <section aria-labelledby="team-heading">
+                <h2 id="team-heading" className="text-2xl text-ink-900">
+                  Therapists
+                </h2>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {therapistList.map((t) => (
+                    <div
+                      key={t.id}
+                      className="flex items-start gap-3 rounded-3xl border border-ink-100 bg-white p-4"
+                    >
+                      {t.avatarUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element -- staff photo uploaded by the spa
+                        <img
+                          src={t.avatarUrl}
+                          alt={t.name}
+                          className="size-10 shrink-0 rounded-full border border-ink-100 object-cover"
+                        />
+                      ) : (
+                        <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-brand-100 font-display text-brand-800">
+                          {t.name
+                            .split(/\s+/)
+                            .slice(0, 2)
+                            .map((w) => w[0])
+                            .join('')}
+                        </span>
+                      )}
+                      <div className="min-w-0">
+                        <p className="text-[14.5px] font-medium">{t.name}</p>
+                        {t.bio && (
+                          <p className="mt-0.5 line-clamp-2 text-[13px] text-ink-500">{t.bio}</p>
+                        )}
+                        <div className="mt-1.5 flex flex-wrap gap-1">
+                          {t.specialties.map((s) => (
+                            <span
+                              key={s}
+                              className="rounded-full bg-sand-100 px-2 py-0.5 text-[11px] text-ink-600"
+                            >
+                              {s}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {/* Reviews */}
+            <section id="reviews" aria-labelledby="reviews-heading" className="scroll-mt-24">
+              <h2 id="reviews-heading" className="text-2xl text-ink-900">
+                Reviews{' '}
+                <span className="text-[17px] font-normal text-ink-400">
+                  ({rating?.count ?? 0})
+                </span>
+              </h2>
+              <div className="mt-4 space-y-3">
+                {reviews.map((r) => (
+                  <article
+                    key={r.id}
+                    className="rounded-3xl border border-ink-100 bg-white p-4 sm:p-5"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-brand-100 text-[15px] font-semibold text-brand-700">
+                          {r.guestName.trim().charAt(0).toUpperCase() || 'G'}
+                        </span>
+                        <div>
+                          <p className="text-[14.5px] font-medium text-ink-800">{r.guestName}</p>
+                          <p className="text-[12.5px] text-ink-400">
+                            {formatDate(r.createdAt)} ·{' '}
+                            {r.bookingId ? 'Verified booking' : 'Guest review'}
+                          </p>
+                        </div>
+                      </div>
+                      <Stars value={r.rating} />
+                    </div>
+                    {r.comment && (
+                      <p className="mt-3 text-[14px] leading-relaxed text-ink-600">{r.comment}</p>
+                    )}
+                  </article>
+                ))}
+                {reviews.length === 0 && (
+                  <p className="rounded-3xl border border-dashed border-ink-200 bg-white p-8 text-center text-sm text-ink-500">
+                    No reviews yet — leave one after your visit.
+                  </p>
+                )}
+              </div>
+            </section>
+
+            {/* Related spas */}
+            {related.length > 0 && (
+              <section aria-labelledby="related-heading">
+                <h2 id="related-heading" className="text-2xl text-ink-900">
+                  Related Spa - More Spa Experiences to Explore
+                </h2>
+                <p className="mt-1.5 text-[14px] text-ink-500">
+                  Discover more exceptional spas, wellness retreats, and beauty treatments tailored
+                  to your preferences.
+                </p>
+                <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {related.map((s, i) => (
+                    <SpaCard key={s.id} spa={s} index={i} />
+                  ))}
+                </div>
+              </section>
+            )}
+          </main>
+
+          {/* ------------------------------ sidebar --------------------------- */}
+          <aside className="w-full shrink-0 space-y-4 lg:sticky lg:top-24 lg:w-96 lg:self-start">
+            {/* Starting from */}
+            {minPrice !== null && (
+              <div className="rounded-3xl border border-ink-100 bg-white p-5">
+                <p className="text-[13px] text-ink-500">Starting from</p>
+                <p className="mt-1 text-3xl font-bold text-ink-900">
+                  {formatMoney(minPrice, b.currency)}
+                </p>
+                <Link href={bookHref} className={`${GREEN_BTN} mt-4 h-11 w-full text-sm`}>
+                  Check availability
+                </Link>
+              </div>
+            )}
+
+            {/* Location */}
+            <div className="rounded-3xl border border-ink-100 bg-white p-5">
+              <h3 className="text-[15px] font-semibold text-ink-900">Location</h3>
+              <p className="mt-3 text-[13.5px] leading-relaxed text-ink-600">
+                {b.addressLine}
+                <br />
+                {[b.city, b.region, b.country].filter(Boolean).join(', ')}
               </p>
-              <p className="mt-1">
-                <span className="text-ink-400">Lead time:</span> {Math.round(b.leadTimeMinutes / 60)}h minimum
-              </p>
-              <p className="mt-1">
-                <span className="text-ink-400">Booking window:</span> up to {b.maxAdvanceDays} days ahead
-              </p>
+              {hasCoords && (
+                <iframe
+                  title={`Map of ${b.name}`}
+                  src={`https://maps.google.com/maps?q=${lat},${lng}&z=15&output=embed`}
+                  loading="lazy"
+                  className="mt-3 h-44 w-full rounded-xl border-0"
+                  referrerPolicy="no-referrer-when-downgrade"
+                />
+              )}
+              <a
+                href={mapsHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-3 inline-flex items-center gap-1.5 text-[12.5px] font-medium text-brand-700 hover:underline"
+              >
+                <MapPin className="size-3.5" /> Open in Google Maps
+              </a>
             </div>
-            <Link href={`/spas/${slug}/${branch}/book`} className={`${buttonClasses('primary', 'md')} mt-5 w-full`}>
-              Check availability
-            </Link>
-            <p className="mt-3 text-center text-[12.5px] text-ink-400">Today is {formatDate(today, b.timezone)}</p>
-          </div>
 
-          {/* Location */}
-          <div className="mt-4 rounded-2xl border border-ink-100 bg-white p-5">
-            <h3 className="text-[15px] font-semibold">Location</h3>
-            <p className="mt-2 text-[13.5px] text-ink-600">
-              {b.addressLine}, {b.city}
-              {b.region ? `, ${b.region}` : ''}
-            </p>
-            {b.lat && b.lng && (
-              <iframe
-                title={`Map of ${b.name}`}
-                src={`https://maps.google.com/maps?q=${encodeURIComponent(`${b.lat},${b.lng}`)}&z=15&output=embed`}
-                loading="lazy"
-                className="mt-3 h-44 w-full rounded-xl border-0"
-                referrerPolicy="no-referrer-when-downgrade"
+            {/* Members */}
+            {!user && (
+              <div className="rounded-3xl border border-amber-200 bg-amber-50/70 p-5">
+                <p className="flex items-center gap-2 text-[15px] font-semibold text-ink-900">
+                  <Sparkles className="size-4 text-amber-500" /> Members book smarter
+                </p>
+                <p className="mt-1.5 text-[13px] leading-relaxed text-ink-600">
+                  Sign in and the 5% platform service fee is{' '}
+                  <span className="font-semibold text-ink-800">waived</span> on your booking —
+                  that&apos;s real savings at this spa and every other on Book Your Spa.
+                </p>
+                <div className="mt-3 flex gap-2">
+                  <Link
+                    href={`/login?next=/spas/${slug}/${branch}`}
+                    className={`${GREEN_BTN} h-9 px-4 text-[13px]`}
+                  >
+                    Sign free
+                  </Link>
+                  <Link
+                    href="/register"
+                    className="inline-flex h-9 items-center justify-center rounded-xl border border-ink-200 bg-white px-4 text-[13px] font-medium text-ink-700 transition hover:border-ink-300 hover:bg-sand-50"
+                  >
+                    Create account
+                  </Link>
+                </div>
+              </div>
+            )}
+
+            {/* Claim this spa */}
+            {claimState && (
+              <ClaimSpaCard
+                providerId={b.provider.id}
+                slug={`${slug}/${branch}`}
+                state={claimState}
               />
             )}
-            <div className="mt-3 flex flex-col gap-2 text-[13.5px]">
-              {b.lat && b.lng && (
-                <a
-                  href={`https://www.google.com/maps/search/?api=1&query=${b.lat},${b.lng}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 text-brand-700 hover:underline"
-                >
-                  <Navigation className="size-3.5" /> Open in Google Maps
-                </a>
-              )}
-              {b.website && (
-                <a href={b.website} target="_blank" rel="noopener noreferrer" className="text-brand-700 hover:underline">
-                  {b.website.replace(/^https?:\/\//, '').replace(/\/$/, '')}
-                </a>
-              )}
-              {b.phone && <a href={`tel:${b.phone}`} className="text-brand-700 hover:underline">{b.phone}</a>}
-              {b.email && <a href={`mailto:${b.email}`} className="text-brand-700 hover:underline">{b.email}</a>}
+
+            {/* Enquiry */}
+            <div className="rounded-3xl border border-dashed border-ink-200 bg-white p-4 text-center">
+              <p className="text-[13px] leading-relaxed text-ink-600">
+                Still interested in this spa? Send your request and our team will help you{' '}
+                {b.provider.ownerId ? 'get the most out of it.' : 'get it claimed and live.'}
+              </p>
+              <a
+                href={`mailto:${supportEmail}`}
+                className="mt-2.5 inline-flex items-center gap-1.5 rounded-full border border-ink-200 bg-white px-3 py-1.5 text-[13px] font-medium text-ink-700 transition hover:border-brand-300 hover:text-brand-700"
+              >
+                <Mail className="size-3.5" /> {supportEmail}
+              </a>
             </div>
-          </div>
-        </aside>
+          </aside>
+        </div>
       </div>
     </>
   );

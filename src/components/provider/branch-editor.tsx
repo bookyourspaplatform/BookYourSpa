@@ -346,7 +346,7 @@ export function BranchEditor({
         agentFeeBps:
           draft.agentFeePercent.trim() === '' || !Number.isFinite(Number(draft.agentFeePercent))
             ? null
-            : Math.min(100, Math.max(0, Math.round(Number(draft.agentFeePercent) * 100))),
+            : Math.min(10000, Math.max(0, Math.round(Number(draft.agentFeePercent) * 100))),
         facilities: draft.facilities,
         description: draft.description?.trim() || null,
         images: draft.images.filter(isRenderableImage).slice(0, MAX_BRANCH_IMAGES),
