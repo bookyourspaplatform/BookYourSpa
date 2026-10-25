@@ -118,8 +118,7 @@ export function BookingWizard({
   treatments,
   products,
   therapists,
-  preselectedTreatmentId,
-  preselectedOptionIndex = null,
+  preselectedItems,
   user,
   guestCheckout,
 }: {
@@ -140,19 +139,21 @@ export function BookingWizard({
   treatments: Treatment[];
   products: Product[];
   therapists: { id: string; name: string; specialties: string[]; avatarUrl: string | null }[];
-  preselectedTreatmentId: string | null;
-  /** Which duration/price tier to preselect (from the spa page's per-option Book links). */
-  preselectedOptionIndex?: number | null;
+  /** Treatments pre-picked by the previous page — 1 for the legacy ?treatment= link, up to 8 from the spa page's multi-select. */
+  preselectedItems: { treatmentId: string; optionIndex: number | null }[];
   user: { name: string; email: string; phone: string; role: Role } | null;
   guestCheckout: boolean;
 }) {
   const toast = useToast();
 
-  const [step, setStep] = useState(preselectedTreatmentId ? 1 : 0);
+  // Arriving with treatments already picked skips straight to Date & time.
+  const [step, setStep] = useState(preselectedItems.length ? 1 : 0);
   const [cart, setCart] = useState<CartLine[]>(() =>
-    preselectedTreatmentId
-      ? [{ treatmentId: preselectedTreatmentId, optionIndex: preselectedOptionIndex ?? 0, persons: 1 }]
-      : [],
+    preselectedItems.map((item) => ({
+      treatmentId: item.treatmentId,
+      optionIndex: item.optionIndex ?? 0,
+      persons: 1,
+    })),
   );
   const [productQty, setProductQty] = useState<Record<string, number>>({});
   const [mode, setMode] = useState<ScheduleMode>('together');

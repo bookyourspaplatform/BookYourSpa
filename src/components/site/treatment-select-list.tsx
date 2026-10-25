@@ -1,0 +1,239 @@
+'use client';
+
+import { useState } from 'react';
+import Link from 'next/link';
+import { Check, X } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { GREEN_BTN } from '@/components/ui/classes';
+import { formatMoney } from '@/lib/money';
+import { cn } from '@/lib/utils';
+
+export type SelectableTreatment = {
+  id: string;
+  name: string;
+  description: string | null;
+  benefits: string[];
+  /** Resolved spa-type chip labels (already filtered to known types). */
+  tagLabels: string[];
+  /** Fallback chip when the treatment carries no known spa-type tag. */
+  categoryLabel: string;
+  genreLabel: string | null;
+  deliveryLabel: string | null;
+  durationMin: number;
+  /** Branch price — the fallback when the treatment has no tiers. */
+  price: number;
+  /** Duration/price tiers rebased onto this branch's price. Never empty. */
+  options: { index: number; durationMin: number; price: number }[];
+};
+
+/**
+ * The spa page's "Treatments & prices" list with the booking wizard's
+ * multi-select behaviour: pick any number of treatments (and a duration tier
+ * on each), then carry the whole selection into the booking flow.
+ */
+export function TreatmentSelectList({
+  treatments,
+  currency,
+  bookHref,
+  highlightedId,
+}: {
+  treatments: SelectableTreatment[];
+  currency: string;
+  /** Booking URL for this branch, e.g. `/spas/serenity-dubai-spa/dubai-spa-at-your-home/book`. */
+  bookHref: string;
+  /** Card to ring out (from the legacy `?treatment=` deep link). */
+  highlightedId?: string | null;
+}) {
+  // treatmentId -> chosen tier index. Presence in the object = selected.
+  const [picked, setPicked] = useState<Record<string, number>>({});
+  const ids = Object.keys(picked);
+
+  function toggle(id: string) {
+    setPicked((cur) => {
+      const next = { ...cur };
+      if (id in next) delete next[id];
+      else next[id] = 0;
+      return next;
+    });
+  }
+
+  /** Pick a duration tier — also selects the treatment if it isn't selected yet. */
+  function pickTier(id: string, optionIndex: number) {
+    setPicked((cur) => ({ ...cur, [id]: optionIndex }));
+  }
+
+  const total = treatments.reduce((sum, t) => {
+    const idx = picked[t.id];
+    if (idx === undefined) return sum;
+    const tier = t.options.find((o) => o.index === idx);
+    return sum + (tier ? tier.price : t.price);
+  }, 0);
+
+  const bookUrl = ids.length
+    ? `${bookHref}?treatments=${ids.join(',')}&options=${ids.map((id) => picked[id]).join(',')}`
+    : bookHref;
+
+  return (
+    <>
+      <div className="mt-4 space-y-4">
+        {treatments.map((t) => {
+          const chosenIdx = picked[t.id];
+          const active = chosenIdx !== undefined;
+          const tierIdx = Math.min(chosenIdx ?? 0, t.options.length - 1);
+          const tier = t.options[tierIdx]!;
+          const fromPrice = Math.min(...t.options.map((o) => o.price));
+          const shownPrice = active ? tier.price : fromPrice;
+          const highlighted = highlightedId === t.id;
+          const toggleThis = () => toggle(t.id);
+          return (
+            <article
+              key={t.id}
+              id={`t-${t.id}`}
+              className={cn(
+                'flex scroll-mt-24 flex-col gap-4 rounded-3xl border bg-white p-5 transition sm:flex-row sm:items-start sm:justify-between',
+                active
+                  ? 'border-brand-500 ring-2 ring-brand-200'
+                  : highlighted
+                    ? 'border-brand-400 ring-2 ring-brand-200 hover:border-brand-300'
+                    : 'border-ink-100 hover:border-brand-200 hover:shadow-sm',
+              )}
+            >
+              <div
+                className="min-w-0 max-w-2xl cursor-pointer"
+                onClick={toggleThis}
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-[17px] font-semibold text-ink-900">{t.name}</h3>
+                  {t.tagLabels.length > 0 ? (
+                    t.tagLabels.map((label) => (
+                      <Badge key={label} tone="brand">
+                        {label}
+                      </Badge>
+                    ))
+                  ) : (
+                    <Badge tone="brand">{t.categoryLabel}</Badge>
+                  )}
+                </div>
+                {t.description && (
+                  <div
+                    className="mt-1.5 [&:has(details[open])_p]:line-clamp-none"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <p className="text-[13.5px] leading-relaxed text-ink-600 line-clamp-2">
+                      {t.description}
+                    </p>
+                    <details className="group mt-1">
+                      <summary className="inline-flex cursor-pointer list-none items-center gap-1 text-[13px] font-medium text-brand-700 transition hover:text-brand-800 [&::-webkit-details-marker]:hidden">
+                        <span className="group-open:hidden">View more ↓</span>
+                        <span className="hidden group-open:inline">Show less ↑</span>
+                      </summary>
+                    </details>
+                  </div>
+                )}
+                {t.benefits.length > 0 && (
+                  <div className="mt-2.5 flex flex-wrap gap-1.5">
+                    {t.benefits.slice(0, 2).map((ben) => (
+                      <span
+                        key={ben}
+                        className="rounded-md bg-sand-100 px-2 py-0.5 text-[11.5px] text-ink-600"
+                      >
+                        {ben}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {/* Duration tiers — the same pills the booking wizard shows;
+                    tapping one selects the treatment at that tier. */}
+                <div
+                  className="mt-3 flex flex-wrap items-center gap-2"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {t.options.map((o) => (
+                    <button
+                      key={`${o.durationMin}-${o.index}`}
+                      type="button"
+                      onClick={() => pickTier(t.id, o.index)}
+                      aria-pressed={active && o.index === tierIdx}
+                      className={cn(
+                        'rounded-lg px-2.5 py-1 text-[12.5px] font-medium transition',
+                        active && o.index === tierIdx
+                          ? 'bg-brand-700 text-white'
+                          : 'bg-ink-100 text-ink-600 hover:bg-ink-200',
+                      )}
+                    >
+                      {o.durationMin} min
+                    </button>
+                  ))}
+                  {t.genreLabel && <Badge tone="info">{t.genreLabel}</Badge>}
+                  {t.deliveryLabel && (
+                    <Badge tone={t.deliveryLabel === 'Doorstep' ? 'clay' : 'neutral'}>
+                      {t.deliveryLabel}
+                    </Badge>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex shrink-0 flex-col items-start gap-3 sm:items-end">
+                <p className="text-[15px] text-ink-500">
+                  {t.options.length > 1 && <span>From </span>}
+                  <span className="text-xl font-bold tabular-nums text-ink-900">
+                    {formatMoney(shownPrice, currency)}
+                  </span>
+                </p>
+                <button
+                  type="button"
+                  onClick={toggleThis}
+                  aria-pressed={active}
+                  className={`${GREEN_BTN} h-10 px-5 text-[13.5px]`}
+                >
+                  {active ? (
+                    <>
+                      <Check className="size-4" strokeWidth={3} />
+                      Selected
+                    </>
+                  ) : (
+                    'Book this treatment'
+                  )}
+                </button>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+
+      {/* Spacer so the sticky bar never covers the last card. */}
+      {ids.length > 0 && <div className="h-24" aria-hidden />}
+
+      {ids.length > 0 && (
+        <div className="fixed inset-x-0 bottom-0 z-40 border-t border-ink-100 bg-white/95 shadow-[0_-8px_30px_rgba(15,23,42,0.08)] backdrop-blur pb-[env(safe-area-inset-bottom)]">
+          <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
+            <div>
+              <p className="text-[15px] font-semibold text-ink-900">
+                {ids.length} treatment{ids.length === 1 ? '' : 's'} selected
+              </p>
+              <p className="text-[13px] text-ink-500">
+                Total from{' '}
+                <span className="font-semibold tabular-nums text-ink-800">
+                  {formatMoney(total, currency)}
+                </span>
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setPicked({})}
+                className="inline-flex h-11 items-center gap-1 rounded-xl border border-ink-200 px-4 text-[13.5px] font-medium text-ink-600 transition hover:border-ink-300 hover:text-ink-800"
+              >
+                <X className="size-3.5" />
+                Clear
+              </button>
+              <Link href={bookUrl} className={`${GREEN_BTN} h-11 px-6 text-sm`}>
+                Book now
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}

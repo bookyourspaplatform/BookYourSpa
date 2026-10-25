@@ -32,7 +32,7 @@ export default async function BookPage({
   searchParams,
 }: {
   params: Promise<{ slug: string; branch: string }>;
-  searchParams: Promise<{ treatment?: string; option?: string; cancelled?: string }>;
+  searchParams: Promise<{ treatment?: string; treatments?: string; option?: string; cancelled?: string }>;
 }) {
   const { slug, branch: branchSlug } = await params;
   const sp = await searchParams;
@@ -45,19 +45,28 @@ export default async function BookPage({
   const user = await getCurrentUser();
   const settings = await getSettings();
 
-  const preselectedRow =
-    sp.treatment && detail.treatments.some((t) => t.id === sp.treatment)
-      ? detail.treatments.find((t) => t.id === sp.treatment)!
-      : null;
-  const preselected = preselectedRow?.id ?? null;
+  /*
+   * Pre-picked treatments come from two links:
+   *   ?treatment=id&option=n   — legacy single-treatment link (per-tier Book buttons)
+   *   ?treatments=a,b,c        — the spa page's multi-select
+   * Unknown ids are dropped; duplicates collapse; the wizard caps carts at 8.
+   */
+  const known = new Set(detail.treatments.map((t) => t.id));
+  const requestedIds = [
+    ...(sp.treatments ?? '').split(','),
+    ...(sp.treatment ? [sp.treatment] : []),
+  ].filter((id) => known.has(id));
   const optionIdx = sp.option === undefined ? Number.NaN : Number(sp.option);
-  const preselectedOptionIndex =
-    preselectedRow &&
-    Number.isInteger(optionIdx) &&
-    optionIdx >= 0 &&
-    optionIdx < (preselectedRow.priceOptions?.length ?? 0)
-      ? optionIdx
-      : null;
+  const preselectedItems = [...new Set(requestedIds)].slice(0, 8).map((id) => {
+    const row = detail.treatments.find((t) => t.id === id)!;
+    // The legacy ?option= hint only applies to the legacy ?treatment= link.
+    const legacy = id === sp.treatment;
+    const optionIndex =
+      legacy && Number.isInteger(optionIdx) && optionIdx >= 0 && optionIdx < (row.priceOptions?.length ?? 0)
+        ? optionIdx
+        : null;
+    return { treatmentId: id, optionIndex };
+  });
 
   const base = `/spas/${slug}/${branchSlug}`;
 
@@ -164,8 +173,7 @@ export default async function BookPage({
               }))
             : []
         }
-        preselectedTreatmentId={preselected}
-        preselectedOptionIndex={preselectedOptionIndex}
+        preselectedItems={preselectedItems}
         user={
           user
             ? { name: user.name, email: user.email, phone: user.phone ?? '', role: user.role }

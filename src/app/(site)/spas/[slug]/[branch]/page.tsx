@@ -25,6 +25,7 @@ import { GREEN_BTN } from '@/components/ui/classes';
 import { formatMoney } from '@/lib/money';
 import { dateKeyInTz, formatDate } from '@/lib/utils';
 import { SpaCard, priceLevel } from '@/components/site/spa-card';
+import { TreatmentSelectList } from '@/components/site/treatment-select-list';
 import { ClaimSpaCard, type ClaimSpaState } from '@/components/site/claim-spa-card';
 
 export const dynamic = 'force-dynamic';
@@ -483,109 +484,45 @@ export default async function BranchDetailPage({
                 Prices in {b.currency}. Availability is live per therapist.
               </p>
 
-              <div className="mt-4 space-y-4">
-                {treatments.map((t) => {
-                  const highlighted = highlightTreatment === t.id;
-                  // Duration tiers re-based onto this branch's own price, so
-                  // what guests see here matches what checkout charges.
-                  const options = (t.priceOptions ?? []).map((o, i) => ({
-                    index: i,
-                    durationMin: o.durationMin,
-                    price: branchOptionPrice(o, t.listPrice, t.price),
-                  }));
-                  const multi = options.length > 1;
-                  const fromPrice = options.length ? Math.min(...options.map((o) => o.price)) : t.price;
+              <TreatmentSelectList
+                currency={b.currency}
+                bookHref={`/spas/${slug}/${branch}/book`}
+                highlightedId={highlightTreatment ?? null}
+                treatments={treatments.map((t) => ({
+                  id: t.id,
+                  name: t.name,
+                  description: t.description ? stripHtml(t.description) : null,
+                  benefits: t.benefits,
                   // Only recognised spa-type tags are shown; legacy free-form
                   // tags fall back to the treatment's category badge.
-                  const spaTypeTags = t.tags.filter((tag) => Boolean(SPA_TYPE_LABELS[tag]));
-                  return (
-                    <article
-                      key={t.id}
-                      id={`t-${t.id}`}
-                      className={`flex scroll-mt-24 flex-col gap-4 rounded-3xl border bg-white p-5 transition hover:border-brand-200 hover:shadow-sm sm:flex-row sm:items-start sm:justify-between ${
-                        highlighted ? 'border-brand-400 ring-2 ring-brand-200' : 'border-ink-100'
-                      }`}
-                    >
-                      <div className="min-w-0 max-w-2xl">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h3 className="text-[17px] font-semibold text-ink-900">{t.name}</h3>
-                          {spaTypeTags.length > 0 ? (
-                            spaTypeTags.slice(0, 4).map((tag) => (
-                              <Badge key={tag} tone="brand">{SPA_TYPE_LABELS[tag]}</Badge>
-                            ))
-                          ) : (
-                            <Badge tone="brand">{CATEGORY_LABELS[t.category] ?? t.category}</Badge>
-                          )}
-                        </div>
-                        {t.description && (
-                          <div className="mt-1.5 [&:has(details[open])_p]:line-clamp-none">
-                            <p className="text-[13.5px] leading-relaxed text-ink-600 line-clamp-2">
-                              {stripHtml(t.description)}
-                            </p>
-                            <details className="group mt-1">
-                              <summary className="inline-flex cursor-pointer list-none items-center gap-1 text-[13px] font-medium text-brand-700 transition hover:text-brand-800 [&::-webkit-details-marker]:hidden">
-                                <span className="group-open:hidden">View more ↓</span>
-                                <span className="hidden group-open:inline">Show less ↑</span>
-                              </summary>
-                            </details>
-                          </div>
-                        )}
-                        {t.benefits.length > 0 && (
-                          <div className="mt-2.5 flex flex-wrap gap-1.5">
-                            {t.benefits.slice(0, 2).map((ben) => (
-                              <span
-                                key={ben}
-                                className="rounded-md bg-sand-100 px-2 py-0.5 text-[11.5px] text-ink-600"
-                              >
-                                {ben}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                        <div className="mt-3 flex flex-wrap items-center gap-2">
-                          {(options.length ? options.map((o) => `${o.durationMin} min`) : [`${t.durationMin} min`]).map(
-                            (label) => (
-                              <span
-                                key={label}
-                                className="rounded-lg bg-ink-100 px-2.5 py-1 text-[12.5px] font-medium text-ink-600"
-                              >
-                                {label}
-                              </span>
-                            ),
-                          )}
-                          {t.genre !== 'both' && (
-                            <Badge tone="info">{GENRE_LABELS[t.genre] ?? t.genre}</Badge>
-                          )}
-                          {t.deliveryType !== 'both' && (
-                            <Badge tone={t.deliveryType === 'doorstep' ? 'clay' : 'neutral'}>
-                              {DELIVERY_TYPE_LABELS[t.deliveryType] ?? t.deliveryType}
-                            </Badge>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex shrink-0 flex-col items-start gap-3 sm:items-end">
-                        <p className="text-[15px] text-ink-500">
-                          {multi && <span>From </span>}
-                          <span className="text-xl font-bold tabular-nums text-ink-900">
-                            {formatMoney(fromPrice, b.currency)}
-                          </span>
-                        </p>
-                        <Link
-                          href={`/spas/${slug}/${branch}/book?treatment=${t.id}`}
-                          className={`${GREEN_BTN} h-10 px-5 text-[13.5px]`}
-                        >
-                          Book this treatment
-                        </Link>
-                      </div>
-                    </article>
-                  );
-                })}
-                {treatments.length === 0 && (
-                  <p className="rounded-3xl border border-dashed border-ink-200 bg-white p-8 text-center text-sm text-ink-500">
-                    Menu coming soon.
-                  </p>
-                )}
-              </div>
+                  tagLabels: t.tags
+                    .filter((tag) => Boolean(SPA_TYPE_LABELS[tag]))
+                    .slice(0, 4)
+                    .map((tag) => SPA_TYPE_LABELS[tag]!),
+                  categoryLabel: CATEGORY_LABELS[t.category] ?? t.category,
+                  genreLabel: t.genre === 'both' ? null : (GENRE_LABELS[t.genre] ?? t.genre),
+                  deliveryLabel:
+                    t.deliveryType === 'both'
+                      ? null
+                      : (DELIVERY_TYPE_LABELS[t.deliveryType] ?? t.deliveryType),
+                  durationMin: t.durationMin,
+                  price: t.price,
+                  // Duration tiers re-based onto this branch's own price, so
+                  // what guests see here matches what checkout charges.
+                  options: (t.priceOptions ?? []).length
+                    ? (t.priceOptions ?? []).map((o, i) => ({
+                        index: i,
+                        durationMin: o.durationMin,
+                        price: branchOptionPrice(o, t.listPrice, t.price),
+                      }))
+                    : [{ index: 0, durationMin: t.durationMin, price: t.price }],
+                }))}
+              />
+              {treatments.length === 0 && (
+                <p className="mt-4 rounded-3xl border border-dashed border-ink-200 bg-white p-8 text-center text-sm text-ink-500">
+                  Menu coming soon.
+                </p>
+              )}
             </section>
 
             {/* Therapists — only when the spa business shows its team online */}
