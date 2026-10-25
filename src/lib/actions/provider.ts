@@ -30,7 +30,7 @@ import {
 } from '@/db/schema';
 import { sanitizeRichText } from '@/lib/security';
 import { requireUser } from '@/lib/auth/session';
-import { cancelBooking, BookingError } from '@/lib/booking';
+import { cancelBooking, hasSlotConflict, BookingError } from '@/lib/booking';
 import { zonedToUtc } from '@/lib/availability';
 import { logAudit } from '@/lib/audit';
 import { getSettings } from '@/lib/settings';
@@ -1215,6 +1215,69 @@ export async function updateBookingStatus(
     return { ok: true };
   } catch (err) {
     const message = err instanceof BookingError ? err.message : 'Could not update the booking.';
+    return fail(message);
+  }
+}
+
+/**
+ * Assign, swap or clear the therapist on a booking. Customers can book without
+ * picking a therapist (auto-assign), and staff changes happen — so the spa must
+ * be able to set one later or move it to somebody else.
+ */
+export async function setBookingTherapist(
+  bookingId: string,
+  therapistId: string | null,
+): Promise<ActionResult> {
+  try {
+    const { db, providerId, user } = await providerCtx();
+    const booking = await assertBooking(db, providerId, bookingId);
+
+    if (['cancelled', 'completed', 'no_show'].includes(booking.status))
+      return fail('This booking can no longer be changed.');
+
+    const treatment = await db.query.treatments.findFirst({ where: eq(treatments.id, booking.treatmentId) });
+    if (!treatment?.requiresTherapist) return fail('This treatment does not need a therapist.');
+
+    if (therapistId) {
+      const person = await assertTherapist(db, providerId, therapistId);
+      if (person.branchId !== booking.branchId) return fail('That therapist does not work at this branch.');
+      if (person.role !== 'therapist') return fail('That staff member is not a bookable therapist.');
+      if (!person.active) return fail('That therapist is inactive.');
+      const busy = await hasSlotConflict(db, {
+        branchId: booking.branchId,
+        therapistId,
+        startAt: booking.startAt,
+        endAt: booking.endAt,
+        excludeBookingId: booking.id,
+      });
+      if (busy) return fail(`${person.name} already has an appointment that overlaps this time.`);
+    }
+
+    try {
+      await db
+        .update(bookings)
+        .set({ therapistId, updatedAt: new Date() })
+        .where(eq(bookings.id, booking.id));
+    } catch {
+      // Partial unique index on (therapist_id, start_at) raced with another write.
+      return fail('That therapist was just booked for this time — pick someone else.');
+    }
+
+    await logAudit({
+      actorId: user.id,
+      actorRole: user.role,
+      action: 'booking.therapist',
+      entity: 'booking',
+      entityId: booking.id,
+      meta: { therapistId },
+    });
+    revalidateProvider(providerId, ['/provider/bookings', '/provider/calendar']);
+    return { ok: true };
+  } catch (err) {
+    const message =
+      err instanceof BookingError || (err instanceof Error && err.message.endsWith('not found.'))
+        ? err.message
+        : 'Could not update the therapist.';
     return fail(message);
   }
 }

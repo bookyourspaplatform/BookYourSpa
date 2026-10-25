@@ -1,15 +1,16 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { and, desc, eq, gte, lte, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import { CalendarDays, ChevronLeft, ChevronRight, Receipt, Search } from 'lucide-react';
 import { getDb } from '@/db';
-import { bookings, branches } from '@/db/schema';
+import { bookings, branches, therapists } from '@/db/schema';
 import { getCurrentUser } from '@/lib/auth/session';
 import { formatMoney } from '@/lib/money';
 import { formatDate, formatDateTime, cn } from '@/lib/utils';
 import { pageMetadata } from '@/lib/seo';
 import { Badge, BOOKING_STATUS_TONE, PAYMENT_STATUS_TONE } from '@/components/ui/badge';
 import { BookingActions } from '@/components/dash/booking-actions';
+import { BookingTherapist, type TherapistOption } from '@/components/dash/booking-therapist';
 
 export const dynamic = 'force-dynamic';
 
@@ -42,6 +43,21 @@ export default async function ProviderBookingsPage({
   const branchIds = branchRows.map((b) => b.id);
   const selectedBranch = sp.branch && branchIds.includes(sp.branch) ? sp.branch : null;
 
+  const therapistRows = branchIds.length
+    ? await db.query.therapists.findMany({
+        where: inArray(therapists.branchId, branchIds),
+        columns: { id: true, name: true, branchId: true, active: true, role: true },
+        orderBy: [therapists.name],
+      })
+    : [];
+  const therapistsByBranch = new Map<string, TherapistOption[]>();
+  for (const t of therapistRows) {
+    if (t.role !== 'therapist') continue; // only bookable staff can be assigned
+    const arr = therapistsByBranch.get(t.branchId) ?? [];
+    arr.push({ id: t.id, name: t.name, active: t.active });
+    therapistsByBranch.set(t.branchId, arr);
+  }
+
   const filters = [eq(bookings.providerId, providerId)];
   if (status !== 'all') filters.push(eq(bookings.status, status as 'pending'));
   if (selectedBranch) filters.push(eq(bookings.branchId, selectedBranch));
@@ -62,7 +78,7 @@ export default async function ProviderBookingsPage({
       limit: PAGE_SIZE,
       with: {
         branch: { columns: { name: true, timezone: true } },
-        treatment: { columns: { name: true, durationMin: true } },
+        treatment: { columns: { name: true, durationMin: true, requiresTherapist: true } },
         therapist: { columns: { name: true } },
         payments: { columns: { gateway: true, status: true }, limit: 1 },
       },
@@ -188,7 +204,11 @@ export default async function ProviderBookingsPage({
                       {formatDateTime(b.startAt, b.timezone)} ({b.branch?.name})
                     </span>
                     <span>{b.guestName} · {b.guestEmail}</span>
-                    {b.therapist && <span>with {b.therapist.name}</span>}
+                    {b.treatment?.requiresTherapist && !b.therapistId ? (
+                      <span className="font-medium text-amber-700">no therapist yet</span>
+                    ) : (
+                      b.therapist && <span>with {b.therapist.name}</span>
+                    )}
                   </p>
                   <p className="mt-1 text-[13px] tabular-nums text-ink-500">
                     {formatMoney(b.totalAmount, b.currency)}
@@ -197,6 +217,13 @@ export default async function ProviderBookingsPage({
                 </div>
 
                 <div className="flex flex-col items-start gap-2 lg:items-end">
+                  {b.treatment?.requiresTherapist && !['cancelled', 'completed', 'no_show'].includes(b.status) && (
+                    <BookingTherapist
+                      bookingId={b.id}
+                      therapistId={b.therapistId}
+                      options={therapistsByBranch.get(b.branchId) ?? []}
+                    />
+                  )}
                   <BookingActions bookingId={b.id} status={b.status} />
                   <div className="flex items-center gap-3 text-[13px]">
                     <Link href={`/voucher/${b.code}`} className="flex items-center gap-1 text-ink-500 hover:text-brand-700">
