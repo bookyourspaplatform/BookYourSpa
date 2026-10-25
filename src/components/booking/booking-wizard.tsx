@@ -138,7 +138,7 @@ export function BookingWizard({
   };
   treatments: Treatment[];
   products: Product[];
-  therapists: { id: string; name: string; specialties: string[] }[];
+  therapists: { id: string; name: string; specialties: string[]; avatarUrl: string | null }[];
   preselectedTreatmentId: string | null;
   /** Which duration/price tier to preselect (from the spa page's per-option Book links). */
   preselectedOptionIndex?: number | null;
@@ -967,6 +967,7 @@ export function BookingWizard({
                         key={t.id}
                         label={t.name}
                         sub={t.specialties[0]}
+                        avatar={t.avatarUrl}
                         active={therapistFilter === t.id}
                         onClick={() => setTherapistFilter(t.id)}
                       />
@@ -1525,18 +1526,41 @@ function ModeCard({
   );
 }
 
-function TherapistChip({ label, sub, active, onClick }: { label: string; sub?: string; active: boolean; onClick: () => void }) {
+function TherapistChip({
+  label,
+  sub,
+  avatar,
+  active,
+  onClick,
+}: {
+  label: string;
+  sub?: string;
+  /** Staff photo — a resized data URL from the spa's Staff list. */
+  avatar?: string | null;
+  active: boolean;
+  onClick: () => void;
+}) {
   return (
     <button
       type="button"
       onClick={onClick}
       className={cn(
-        'flex shrink-0 flex-col items-start rounded-xl border px-3.5 py-2 text-left transition',
+        'flex shrink-0 flex-row items-center gap-2 rounded-xl border px-3 py-2 text-left transition',
         active ? 'border-brand-600 bg-brand-50 text-brand-900' : 'border-ink-200 bg-white text-ink-700 hover:border-brand-300',
       )}
     >
-      <span className="text-[13.5px] font-medium">{label}</span>
-      {sub && <span className="text-[11.5px] text-ink-400">{sub}</span>}
+      {avatar && (
+        // eslint-disable-next-line @next/next/no-img-element -- staff photo uploaded by the spa
+        <img
+          src={avatar}
+          alt=""
+          className="size-7 shrink-0 rounded-full border border-ink-100 object-cover"
+        />
+      )}
+      <span className="min-w-0">
+        <span className="block truncate text-[13.5px] font-medium">{label}</span>
+        {sub && <span className="block truncate text-[11.5px] text-ink-400">{sub}</span>}
+      </span>
     </button>
   );
 }

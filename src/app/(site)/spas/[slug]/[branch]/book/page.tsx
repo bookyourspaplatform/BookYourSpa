@@ -160,6 +160,7 @@ export default async function BookPage({
                 id: t.id,
                 name: t.name,
                 specialties: t.specialties,
+                avatarUrl: t.avatarUrl,
               }))
             : []
         }
