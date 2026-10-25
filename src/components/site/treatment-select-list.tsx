@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { Check, X } from 'lucide-react';
+import { Check, Minus, Plus, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { GREEN_BTN } from '@/components/ui/classes';
 import { formatMoney } from '@/lib/money';
@@ -22,9 +22,17 @@ export type SelectableTreatment = {
   durationMin: number;
   /** Branch price — the fallback when the treatment has no tiers. */
   price: number;
+  /** Concurrent-guest capacity for the whole treatment (fallback for tiers). */
+  capacity: number;
   /** Duration/price tiers rebased onto this branch's price. Never empty. */
-  options: { index: number; durationMin: number; price: number }[];
+  options: { index: number; durationMin: number; price: number; capacity: number }[];
 };
+
+/** Mirrors the booking wizard: 1..min(8, tier capacity). */
+function maxPersonsOf(t: SelectableTreatment, tierIdx: number): number {
+  const tier = t.options[Math.min(Math.max(tierIdx, 0), t.options.length - 1)];
+  return Math.max(1, Math.min(8, tier?.capacity ?? t.capacity));
+}
 
 /**
  * The spa page's "Treatments & prices" list with the booking wizard's
@@ -46,7 +54,10 @@ export function TreatmentSelectList({
 }) {
   // treatmentId -> chosen tier index. Presence in the object = selected.
   const [picked, setPicked] = useState<Record<string, number>>({});
+  // treatmentId -> how many guests share this treatment (default 1).
+  const [persons, setPersons] = useState<Record<string, number>>({});
   const ids = Object.keys(picked);
+  const personsOf = (id: string) => persons[id] ?? 1;
 
   function toggle(id: string) {
     setPicked((cur) => {
@@ -60,17 +71,38 @@ export function TreatmentSelectList({
   /** Pick a duration tier — also selects the treatment if it isn't selected yet. */
   function pickTier(id: string, optionIndex: number) {
     setPicked((cur) => ({ ...cur, [id]: optionIndex }));
+    // A tier can have a smaller capacity — keep the guest count valid for it.
+    setPersons((cur) => {
+      const t = treatments.find((x) => x.id === id);
+      if (!t || cur[id] === undefined) return cur;
+      const cap = maxPersonsOf(t, optionIndex);
+      return cur[id]! <= cap ? cur : { ...cur, [id]: cap };
+    });
+  }
+
+  /** Guests stepper — selecting the treatment the first time it is touched. */
+  function bumpPersons(id: string, delta: number) {
+    const t = treatments.find((x) => x.id === id);
+    if (!t) return;
+    const tierIdx = picked[id] ?? 0;
+    const max = maxPersonsOf(t, tierIdx);
+    const next = Math.min(max, Math.max(1, personsOf(id) + delta));
+    setPicked((cur) => (id in cur ? cur : { ...cur, [id]: 0 }));
+    setPersons((cur) => ({ ...cur, [id]: next }));
   }
 
   const total = treatments.reduce((sum, t) => {
     const idx = picked[t.id];
     if (idx === undefined) return sum;
     const tier = t.options.find((o) => o.index === idx);
-    return sum + (tier ? tier.price : t.price);
+    return sum + (tier ? tier.price : t.price) * personsOf(t.id);
   }, 0);
+  const totalGuests = ids.reduce((sum, id) => sum + personsOf(id), 0);
 
   const bookUrl = ids.length
-    ? `${bookHref}?treatments=${ids.join(',')}&options=${ids.map((id) => picked[id]).join(',')}`
+    ? `${bookHref}?treatments=${ids.join(',')}&options=${ids
+        .map((id) => picked[id])
+        .join(',')}&persons=${ids.map((id) => personsOf(id)).join(',')}`
     : bookHref;
 
   return (
@@ -81,8 +113,10 @@ export function TreatmentSelectList({
           const active = chosenIdx !== undefined;
           const tierIdx = Math.min(chosenIdx ?? 0, t.options.length - 1);
           const tier = t.options[tierIdx]!;
+          const maxPersons = maxPersonsOf(t, tierIdx);
+          const guests = personsOf(t.id);
           const fromPrice = Math.min(...t.options.map((o) => o.price));
-          const shownPrice = active ? tier.price : fromPrice;
+          const shownPrice = active ? tier.price * guests : fromPrice;
           const highlighted = highlightedId === t.id;
           const toggleThis = () => toggle(t.id);
           return (
@@ -171,11 +205,46 @@ export function TreatmentSelectList({
                     </Badge>
                   )}
                 </div>
+
+                {/* Guests — how many people share this treatment at once.
+                    Same stepper the booking wizard shows, capped by the
+                    treatment's capacity (and never above 8). */}
+                <div
+                  className="mt-3 flex flex-wrap items-center gap-2"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <span className="text-[13px] text-ink-500">Persons</span>
+                  <button
+                    type="button"
+                    aria-label={`Fewer persons for ${t.name}`}
+                    onClick={() => bumpPersons(t.id, -1)}
+                    disabled={personsOf(t.id) <= 1}
+                    className="flex size-7 items-center justify-center rounded-lg border border-ink-200 text-ink-700 transition hover:border-brand-400 hover:text-brand-800 disabled:opacity-40"
+                  >
+                    <Minus className="size-3.5" />
+                  </button>
+                  <span className="w-6 text-center text-[15px] font-semibold tabular-nums">
+                    {personsOf(t.id)}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={`More persons for ${t.name}`}
+                    onClick={() => bumpPersons(t.id, 1)}
+                    disabled={personsOf(t.id) >= maxPersons}
+                    className="flex size-7 items-center justify-center rounded-lg border border-ink-200 text-ink-700 transition hover:border-brand-400 hover:text-brand-800 disabled:opacity-40"
+                  >
+                    <Plus className="size-3.5" />
+                  </button>
+                  <span className="ml-1 text-[12px] text-ink-400">max {maxPersons}</span>
+                </div>
               </div>
 
               <div className="flex shrink-0 flex-col items-start gap-3 sm:items-end">
                 <p className="text-[15px] text-ink-500">
-                  {t.options.length > 1 && <span>From </span>}
+                  {active && guests > 1 && (
+                    <span className="mr-1 tabular-nums text-ink-400">{guests} ×</span>
+                  )}
+                  {t.options.length > 1 && !active && <span>From </span>}
                   <span className="text-xl font-bold tabular-nums text-ink-900">
                     {formatMoney(shownPrice, currency)}
                   </span>
@@ -216,6 +285,9 @@ export function TreatmentSelectList({
                 <span className="font-semibold tabular-nums text-ink-800">
                   {formatMoney(total, currency)}
                 </span>
+                {totalGuests > 1 && (
+                  <span className="text-ink-400"> · {totalGuests} guests</span>
+                )}
               </p>
             </div>
             <div className="flex items-center gap-2">

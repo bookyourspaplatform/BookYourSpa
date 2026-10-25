@@ -140,7 +140,7 @@ export function BookingWizard({
   products: Product[];
   therapists: { id: string; name: string; specialties: string[]; avatarUrl: string | null }[];
   /** Treatments pre-picked by the previous page — 1 for the legacy ?treatment= link, up to 8 from the spa page's multi-select. */
-  preselectedItems: { treatmentId: string; optionIndex: number | null }[];
+  preselectedItems: { treatmentId: string; optionIndex: number | null; persons?: number }[];
   user: { name: string; email: string; phone: string; role: Role } | null;
   guestCheckout: boolean;
 }) {
@@ -149,11 +149,16 @@ export function BookingWizard({
   // Arriving with treatments already picked skips straight to Date & time.
   const [step, setStep] = useState(preselectedItems.length ? 1 : 0);
   const [cart, setCart] = useState<CartLine[]>(() =>
-    preselectedItems.map((item) => ({
-      treatmentId: item.treatmentId,
-      optionIndex: item.optionIndex ?? 0,
-      persons: 1,
-    })),
+    preselectedItems.map((item) => {
+      const t = treatments.find((x) => x.id === item.treatmentId);
+      let persons = Math.max(1, Math.min(8, item.persons ?? 1));
+      if (t) {
+        const tiers = tiersOf(t);
+        const tier = tiers[Math.min(Math.max(item.optionIndex ?? 0, 0), tiers.length - 1)]!;
+        persons = Math.min(persons, Math.max(1, Math.min(8, tier.capacity ?? t.capacity)));
+      }
+      return { treatmentId: item.treatmentId, optionIndex: item.optionIndex ?? 0, persons };
+    }),
   );
   const [productQty, setProductQty] = useState<Record<string, number>>({});
   const [mode, setMode] = useState<ScheduleMode>('together');

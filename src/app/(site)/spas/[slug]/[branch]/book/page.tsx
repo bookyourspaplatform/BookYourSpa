@@ -32,7 +32,13 @@ export default async function BookPage({
   searchParams,
 }: {
   params: Promise<{ slug: string; branch: string }>;
-  searchParams: Promise<{ treatment?: string; treatments?: string; option?: string; cancelled?: string }>;
+  searchParams: Promise<{
+    treatment?: string;
+    treatments?: string;
+    option?: string;
+    persons?: string;
+    cancelled?: string;
+  }>;
 }) {
   const { slug, branch: branchSlug } = await params;
   const sp = await searchParams;
@@ -52,10 +58,18 @@ export default async function BookPage({
    * Unknown ids are dropped; duplicates collapse; the wizard caps carts at 8.
    */
   const known = new Set(detail.treatments.map((t) => t.id));
+  const spaPickedIds = (sp.treatments ?? '').split(',').filter(Boolean);
   const requestedIds = [
-    ...(sp.treatments ?? '').split(','),
+    ...spaPickedIds,
     ...(sp.treatment ? [sp.treatment] : []),
   ].filter((id) => known.has(id));
+  // Guest counts travel alongside the id list (?persons=2,1) — same order.
+  const personsParts = (sp.persons ?? '').split(',');
+  const personsById = new Map<string, number>();
+  spaPickedIds.forEach((id, i) => {
+    const n = Number(personsParts[i]);
+    if (Number.isInteger(n) && n >= 1 && n <= 8) personsById.set(id, n);
+  });
   const optionIdx = sp.option === undefined ? Number.NaN : Number(sp.option);
   const preselectedItems = [...new Set(requestedIds)].slice(0, 8).map((id) => {
     const row = detail.treatments.find((t) => t.id === id)!;
@@ -65,7 +79,7 @@ export default async function BookPage({
       legacy && Number.isInteger(optionIdx) && optionIdx >= 0 && optionIdx < (row.priceOptions?.length ?? 0)
         ? optionIdx
         : null;
-    return { treatmentId: id, optionIndex };
+    return { treatmentId: id, optionIndex, persons: personsById.get(id) ?? 1 };
   });
 
   const base = `/spas/${slug}/${branchSlug}`;

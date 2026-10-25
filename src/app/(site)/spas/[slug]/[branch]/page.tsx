@@ -26,6 +26,7 @@ import { formatMoney } from '@/lib/money';
 import { dateKeyInTz, formatDate } from '@/lib/utils';
 import { SpaCard, priceLevel } from '@/components/site/spa-card';
 import { TreatmentSelectList } from '@/components/site/treatment-select-list';
+import { SpaGallery } from '@/components/site/spa-gallery';
 import { ClaimSpaCard, type ClaimSpaState } from '@/components/site/claim-spa-card';
 
 export const dynamic = 'force-dynamic';
@@ -57,10 +58,6 @@ const PAYMENT_LABELS: Record<string, string> = {
   razorpay: 'Razorpay / e-wallet',
   venue: 'Pay at the venue',
 };
-
-function initialsOf(name: string) {
-  return name.split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
-}
 
 function HighlightHeading({ id, children }: { id?: string; children: React.ReactNode }) {
   return (
@@ -191,9 +188,6 @@ export default async function BranchDetailPage({
   ]
     .filter((src): src is string => Boolean(src))
     .filter((src, i, arr) => arr.indexOf(src) === i);
-  const photos = gallery.slice(0, 5);
-  const sidePhotos = photos.slice(1, 5);
-  const extraPhotos = Math.max(0, gallery.length - photos.length);
   const gradient = GRADIENTS[slug.length % GRADIENTS.length];
 
   /* ---------- facilities ---------- */
@@ -250,51 +244,8 @@ export default async function BranchDetailPage({
       <JsonLd data={jsonLd} />
 
       <div className="mx-auto max-w-7xl space-y-6 px-4 pb-14 pt-6 sm:px-6 lg:px-8">
-        {/* Photo gallery */}
-        <section aria-label="Photos" className="overflow-hidden rounded-3xl border border-ink-100">
-          <div className="grid grid-cols-2 gap-1.5 md:h-[430px] md:grid-cols-4 md:grid-rows-2">
-            <div className="relative col-span-2 h-60 md:col-span-2 md:row-span-2 md:h-auto">
-              {photos[0] ? (
-                // eslint-disable-next-line @next/next/no-img-element -- branch uploads may be data URLs
-                <img
-                  src={photos[0]}
-                  alt={`${b.name} — photo`}
-                  className="absolute inset-0 size-full object-cover"
-                />
-              ) : (
-                <div
-                  className={`absolute inset-0 flex items-center justify-center bg-gradient-to-br ${gradient}`}
-                >
-                  <span className="font-display text-6xl text-white/90">
-                    {initialsOf(b.name)}
-                  </span>
-                </div>
-              )}
-            </div>
-            {sidePhotos.map((src, i) => (
-              <div key={src} className="relative h-32 md:h-auto">
-                {/* eslint-disable-next-line @next/next/no-img-element -- branch uploads may be data URLs */}
-                <img
-                  src={src}
-                  alt=""
-                  loading="lazy"
-                  className="absolute inset-0 size-full object-cover"
-                />
-                {i === sidePhotos.length - 1 && extraPhotos > 0 && (
-                  <span className="absolute bottom-2 right-2 rounded-full bg-black/65 px-2.5 py-1 text-[11.5px] font-medium text-white">
-                    +{extraPhotos} more photos
-                  </span>
-                )}
-              </div>
-            ))}
-            {Array.from({ length: Math.max(0, 4 - sidePhotos.length) }).map((_, i) => (
-              <div
-                key={`ph-${i}`}
-                className={`h-32 bg-gradient-to-br opacity-90 md:h-auto ${GRADIENTS[(i + 2) % GRADIENTS.length]}`}
-              />
-            ))}
-          </div>
-        </section>
+        {/* Photo gallery — click any photo to enlarge and browse them all */}
+        <SpaGallery photos={gallery} name={b.name} gradient={gradient} />
 
         <div className="gap-8 lg:flex">
           {/* ------------------------------ main ------------------------------ */}
@@ -464,6 +415,12 @@ export default async function BranchDetailPage({
                     before your session.
                   </p>
                   <p>
+                    <span className="font-semibold text-ink-800">Therapist Arrival:</span> If you
+                    book a Doorstep (Massage on Call) treatment, your therapist may arrive a little
+                    earlier than your booked time so they can set up and get everything ready
+                    before your session starts.
+                  </p>
+                  <p>
                     <span className="font-semibold text-ink-800">Cancellation:</span> Free
                     cancellation up to {cancelHours} hours before your appointment. Later
                     cancellations are charged 50%; no-shows are charged in full.
@@ -507,6 +464,7 @@ export default async function BranchDetailPage({
                       : (DELIVERY_TYPE_LABELS[t.deliveryType] ?? t.deliveryType),
                   durationMin: t.durationMin,
                   price: t.price,
+                  capacity: t.capacity,
                   // Duration tiers re-based onto this branch's own price, so
                   // what guests see here matches what checkout charges.
                   options: (t.priceOptions ?? []).length
@@ -514,8 +472,9 @@ export default async function BranchDetailPage({
                         index: i,
                         durationMin: o.durationMin,
                         price: branchOptionPrice(o, t.listPrice, t.price),
+                        capacity: o.capacity ?? t.capacity,
                       }))
-                    : [{ index: 0, durationMin: t.durationMin, price: t.price }],
+                    : [{ index: 0, durationMin: t.durationMin, price: t.price, capacity: t.capacity }],
                 }))}
               />
               {treatments.length === 0 && (
