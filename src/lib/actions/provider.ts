@@ -1,13 +1,14 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb, type AppDb } from '@/db';
 import {
   bookings,
   branchTreatments,
   branches,
+  bookingProducts,
   commissions,
   payments,
   products,
@@ -30,10 +31,12 @@ import {
 import { sanitizeRichText } from '@/lib/security';
 import { requireUser } from '@/lib/auth/session';
 import { cancelBooking, BookingError } from '@/lib/booking';
+import { zonedToUtc } from '@/lib/availability';
 import { logAudit } from '@/lib/audit';
 import { getSettings } from '@/lib/settings';
-import { priceBooking } from '@/lib/pricing';
-import { newId, newVoucherCode, slugify, isValidTime, hhmm, minutesOf } from '@/lib/utils';
+import { branchOptionPrice, pickPriceOption } from '@/lib/pricing';
+import { formatMoney } from '@/lib/money';
+import { clamp, newId, newVoucherCode, slugify, isValidTime, hhmm, minutesOf } from '@/lib/utils';
 
 export type ActionResult<T = unknown> =
   | { ok: true; data?: T }
@@ -483,6 +486,8 @@ const treatmentSchema = z.object({
   genre: z.enum(TREATMENT_GENRES).default('both'),
   deliveryType: z.enum(TREATMENT_DELIVERY_TYPES).default('both'),
   requiresTherapist: z.boolean().default(true),
+  /** Therapists needed per session — couples / four-hand treatments use 2+. */
+  therapistsPerBooking: z.number().int().min(1).max(4).default(1),
   agentApproved: z.boolean(),
   /** Spa-type tags (shared vocabulary with the spa editor). Free-form input
    *  is accepted and filtered to known spa types so legacy rows stay editable. */
@@ -511,6 +516,7 @@ export async function saveTreatment(input: z.infer<typeof treatmentSchema>): Pro
       genre: data.genre,
       deliveryType: data.deliveryType,
       requiresTherapist: data.requiresTherapist,
+      therapistsPerBooking: data.requiresTherapist ? data.therapistsPerBooking : 1,
       agentApproved: data.agentApproved,
       tags: data.tags.filter((t) => knownTypes.has(t)) as (typeof SPA_TYPES)[number][],
       ...(data.status ? { status: data.status } : {}),
@@ -706,29 +712,49 @@ export async function setTherapistActive(therapistId: string, active: boolean): 
 
 /* -------------------------------- POS ---------------------------------- */
 
+const posItemSchema = z.object({
+  treatmentId: z.string().min(1),
+  optionIndex: z.number().int().min(0).max(9).default(0),
+  qty: z.number().int().min(1).max(20),
+  /** Branch-local start time, "HH:MM". */
+  time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+  /** One therapist per slot — qty × therapistsPerBooking, in unit order. */
+  therapistIds: z.array(z.string().min(1)).max(8).default([]),
+});
+
 const posSaleSchema = z.object({
   branchId: z.string().min(1),
-  treatmentId: z.string().min(1),
-  therapistId: z.string().optional().nullable(),
   guestName: z.string().trim().min(1).max(120),
+  guestEmail: z.string().trim().max(200).optional().nullable(),
   guestPhone: z.string().trim().max(40).optional().nullable(),
-  /** Walk-in override — falls back to the branch price when omitted or 0. */
+  /** Branch-local calendar date (YYYY-MM-DD). */
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  items: z.array(posItemSchema).min(1).max(8),
+  products: z
+    .array(z.object({ productId: z.string().min(1), quantity: z.number().int().min(1).max(99) }))
+    .max(20)
+    .default([]),
+  discountPercent: z.number().min(0).max(100).default(0),
+  /** Negotiated total in minor units — the till sends its computed total. */
   amount: z.number().int().min(0).max(1_000_000_000).optional(),
   paymentMethod: z.enum(['cash', 'card', 'other']).default('cash'),
   notes: z.string().max(400).optional().nullable(),
 });
 
+export type PosSaleItem = { name: string; qty: number; amount: number };
+export type PosSaleShare = { name: string; bps: number; amount: number };
+
 export type PosSaleResult = {
   id: string;
   code: string;
-  treatmentName: string;
-  staffName: string | null;
   total: number;
   platformFee: number;
-  providerEarning: number;
-  staffShare: number;
+  /** Total − platform fee − therapist shares. */
+  spaIncome: number;
   currency: string;
   paymentMethod: string;
+  items: PosSaleItem[];
+  shares: PosSaleShare[];
 };
 
 /** Walk-in sale taken at the front desk — always captured as paid. */
@@ -740,112 +766,271 @@ export async function createPosSale(input: z.infer<typeof posSaleSchema>): Promi
     const data = parsed.data;
 
     const branch = await assertBranch(db, providerId, data.branchId);
-    const treatment = await assertTreatment(db, providerId, data.treatmentId);
-    if (treatment.status !== 'active') return fail('That treatment is not published.');
 
-    const link = await db.query.branchTreatments.findFirst({
-      where: and(eq(branchTreatments.branchId, branch.id), eq(branchTreatments.treatmentId, treatment.id)),
-    });
-    if (!link || !link.active) return fail('That treatment is not offered at this branch.');
+    /* --- catalog: every treatment must be live and offered here --- */
+    const treatmentIds = [...new Set(data.items.map((i) => i.treatmentId))];
+    const [treatmentRows, links, branchStaff] = await Promise.all([
+      db.query.treatments.findMany({ where: inArray(treatments.id, treatmentIds) }),
+      db.query.branchTreatments.findMany({
+        where: and(
+          eq(branchTreatments.branchId, branch.id),
+          inArray(branchTreatments.treatmentId, treatmentIds),
+        ),
+      }),
+      db.query.therapists.findMany({
+        where: eq(therapists.branchId, branch.id),
+        columns: {
+          id: true,
+          name: true,
+          active: true,
+          salaryType: true,
+          salaryValue: true,
+          incentiveType: true,
+          incentiveValue: true,
+        },
+      }),
+    ]);
+    const activeStaff = branchStaff.filter((s) => s.active);
 
-    let staff: (typeof therapists.$inferSelect) | null = null;
-    if (data.therapistId) {
-      staff = await assertTherapist(db, providerId, data.therapistId);
-      if (staff.branchId !== branch.id) return fail('That staff member works at another branch.');
-      if (!staff.active) return fail('That staff member is inactive.');
+    /* --- one row per therapist slot: qty × therapists-per-booking --- */
+    type Slot = {
+      treatmentId: string;
+      therapistId: string | null;
+      listUnit: number;
+      startAt: Date;
+      endAt: Date;
+    };
+    const slots: Slot[] = [];
+    const lineItems: PosSaleItem[] = [];
+
+    for (const item of data.items) {
+      const treatment = treatmentRows.find((t) => t.id === item.treatmentId);
+      if (!treatment || treatment.status !== 'active') return fail('That treatment is not published.');
+      const link = links.find((l) => l.treatmentId === item.treatmentId);
+      if (!link || !link.active) return fail('That treatment is not offered at this branch.');
+
+      const option = pickPriceOption(treatment.priceOptions, item.optionIndex);
+      const unitPrice = option
+        ? branchOptionPrice(option, treatment.listPrice, link.price)
+        : link.price;
+      const durationMin = option?.durationMin ?? treatment.durationMin;
+      const per = treatment.requiresTherapist
+        ? clamp(Math.max(1, treatment.therapistsPerBooking ?? 1), 1, 4)
+        : 1;
+      const slotCount = item.qty * per;
+
+      const ids: (string | null)[] = item.therapistIds.slice(0, slotCount);
+      while (ids.length < slotCount) ids.push(null);
+      if (treatment.requiresTherapist && activeStaff.length && ids.some((id) => !id))
+        return fail(`Assign a therapist for every ${treatment.name} slot.`);
+      const assigned = ids.filter((id): id is string => Boolean(id));
+      if (new Set(assigned).size !== assigned.length)
+        return fail(`The same therapist is listed twice on ${treatment.name}.`);
+      for (const id of assigned) {
+        const person = branchStaff.find((s) => s.id === id);
+        if (!person) return fail('That staff member does not work at this branch.');
+        if (!person.active) return fail('That staff member is inactive.');
+      }
+
+      const startAt = zonedToUtc(data.date, minutesOf(item.time), branch.timezone);
+      const endAt = new Date(startAt.getTime() + durationMin * 60_000);
+
+      // A couples treatment's price is shared by its therapists (275 each of 550).
+      const sliceOf = (j: number) =>
+        per === 1 ? unitPrice : Math.round((unitPrice * (j + 1)) / per) - Math.round((unitPrice * j) / per);
+
+      for (let u = 0; u < item.qty; u++) {
+        for (let j = 0; j < per; j++) {
+          slots.push({
+            treatmentId: treatment.id,
+            therapistId: treatment.requiresTherapist ? ids[u * per + j] ?? null : null,
+            listUnit: sliceOf(j),
+            startAt,
+            endAt,
+          });
+        }
+      }
+      lineItems.push({
+        name: `${treatment.name} (${durationMin} min)`,
+        qty: item.qty,
+        amount: unitPrice * item.qty,
+      });
     }
 
+    /* --- retail products (sold from this branch's shelf) --- */
+    const productLines: {
+      productId: string;
+      name: string;
+      unitPrice: number;
+      quantity: number;
+    }[] = [];
+    if (data.products.length) {
+      const pids = [...new Set(data.products.map((p) => p.productId))];
+      const rows = await db.query.products.findMany({
+        where: and(eq(products.branchId, branch.id), inArray(products.id, pids)),
+      });
+      for (const req of data.products) {
+        const row = rows.find((r) => r.id === req.productId);
+        if (!row || !row.active) return fail('A product in this sale is no longer available.');
+        if (row.currency !== branch.currency) return fail('Product currency does not match this branch.');
+        productLines.push({
+          productId: row.id,
+          name: row.name,
+          unitPrice: row.price,
+          quantity: req.quantity,
+        });
+      }
+    }
+    const productsGross = productLines.reduce((sum, p) => sum + p.unitPrice * p.quantity, 0);
+
+    /* --- money: walk-in total, discount, platform fee --- */
     const settings = await getSettings();
     const posBps = settings['finance.posCommissionBps'];
-    const listPrice = data.amount && data.amount > 0 ? data.amount : link.price;
-    const pricing = priceBooking({
-      listPrice,
-      coupon: null,
-      platformBps: posBps,
-      agent: null,
-    });
+    const treatmentsGross = slots.reduce((sum, s) => sum + s.listUnit, 0);
+    const gross = treatmentsGross + productsGross;
+    const pctOff = Math.round((gross * clamp(data.discountPercent, 0, 100)) / 100);
+    const negotiated = data.amount && data.amount > 0 ? data.amount : Math.max(0, gross - pctOff);
+    const listPrice = Math.max(gross, negotiated);
+    const discountAmount = Math.max(0, listPrice - negotiated);
+    const total = negotiated;
+    const platformFee = Math.round((total * posBps) / 10_000);
+    const ratio = listPrice > 0 ? total / listPrice : 0;
+
+    /* --- therapist shares: their percentage of what they personally served --- */
+    const shareAcc = new Map<string, { name: string; bps: number; paid: number }>();
+    for (const slot of slots) {
+      if (!slot.therapistId) continue;
+      const person = branchStaff.find((s) => s.id === slot.therapistId);
+      if (!person) continue;
+      const bps =
+        (person.salaryType === 'percent' ? person.salaryValue : 0) +
+        (person.incentiveType === 'percent' ? person.incentiveValue : 0);
+      const found = shareAcc.get(person.id);
+      if (found) found.paid += slot.listUnit * ratio;
+      else shareAcc.set(person.id, { name: person.name, bps, paid: slot.listUnit * ratio });
+    }
+    const shares: PosSaleShare[] = [...shareAcc.values()].map((s) => ({
+      name: s.name,
+      bps: s.bps,
+      amount: Math.round((s.paid * Math.min(s.bps, 10_000)) / 10_000),
+    }));
+    const sharesTotal = shares.reduce((sum, s) => sum + s.amount, 0);
+
+    /* --- split the sale across rows so every figure sums to the totals --- */
+    const surplus = Math.max(0, listPrice - gross);
+    const rowList = slots.map((s, i) => s.listUnit + (i === 0 ? productsGross + surplus : 0));
+    const rowDiscount = rowList.map((l) =>
+      listPrice > 0 ? Math.floor((discountAmount * l) / listPrice) : 0,
+    );
+    rowDiscount[0] = (rowDiscount[0] ?? 0) + (discountAmount - rowDiscount.reduce((s, d) => s + d, 0));
+    const rowTotals = rowList.map((l, i) => l - rowDiscount[i]!);
+    const rowFee = rowTotals.map((t) => (total > 0 ? Math.round((platformFee * t) / total) : 0));
+    rowFee[0] = (rowFee[0] ?? 0) + (platformFee - rowFee.reduce((s, f) => s + f, 0));
 
     const now = new Date();
-    const endAt = new Date(now.getTime() + treatment.durationMin * 60_000);
+    const groupId = newId('grp');
+    const shareNote = shares.length
+      ? `staff share ${shares
+          .map((s) => `${s.name} ${formatMoney(s.amount, branch.currency)}`)
+          .join(', ')}`
+      : null;
+    const saleNotes = [data.notes?.trim() || null, `POS · ${data.paymentMethod}`]
+      .filter(Boolean)
+      .join(' — ');
 
-    /* Staff paid by percentage earns a share of this job (salary + job fee). */
-    let staffShare = 0;
-    if (staff) {
-      const bps =
-        (staff.salaryType === 'percent' ? staff.salaryValue : 0) +
-        (staff.incentiveType === 'percent' ? staff.incentiveValue : 0);
-      if (bps > 0) staffShare = Math.round((pricing.total * Math.min(bps, 10_000)) / 10_000);
-    }
+    const rows = await db.transaction(async (tx) => {
+      const created: (typeof bookings.$inferSelect)[] = [];
 
-    const bookingRow = await db.transaction(async (tx) => {
-      const rows = await tx
-        .insert(bookings)
-        .values({
-          id: newId('bkg'),
-          code: newVoucherCode(),
-          providerId,
-          branchId: branch.id,
-          treatmentId: treatment.id,
-          therapistId: staff?.id ?? null,
-          guestName: data.guestName,
-          guestEmail: '',
-          guestPhone: data.guestPhone || null,
-          startAt: now,
-          endAt,
-          timezone: branch.timezone,
-          status: 'confirmed',
-          paymentStatus: 'paid',
-          channel: 'pos',
-          currency: branch.currency,
-          listPrice: pricing.listPrice,
-          discountAmount: pricing.discountAmount,
-          totalAmount: pricing.total,
-          platformFee: pricing.platformFee,
-          agentCommission: 0,
-          providerEarning: pricing.providerEarning,
-          expiresAt: null,
+      for (let i = 0; i < slots.length; i++) {
+        const slot = slots[i]!;
+        const providerEarning = rowTotals[i]! - rowFee[i]!;
+        const [row] = await tx
+          .insert(bookings)
+          .values({
+            id: newId('bkg'),
+            code: newVoucherCode(),
+            groupId,
+            providerId,
+            branchId: branch.id,
+            treatmentId: slot.treatmentId,
+            therapistId: slot.therapistId,
+            guestName: data.guestName,
+            guestEmail: (data.guestEmail ?? '').trim().toLowerCase(),
+            guestPhone: data.guestPhone || null,
+            guestCount: 1,
+            startAt: slot.startAt,
+            endAt: slot.endAt,
+            timezone: branch.timezone,
+            status: 'confirmed',
+            paymentStatus: 'paid',
+            channel: 'pos',
+            currency: branch.currency,
+            listPrice: rowList[i]!,
+            discountAmount: rowDiscount[i]!,
+            totalAmount: rowTotals[i]!,
+            platformFee: rowFee[i]!,
+            agentCommission: 0,
+            providerEarning,
+            expiresAt: null,
+            paidAt: now,
+            notes: i === 0 ? [saleNotes, shareNote].filter(Boolean).join(' — ').slice(0, 400) : saleNotes,
+          })
+          .returning();
+        const row2 = row!;
+        created.push(row2);
+
+        const ledger: (typeof commissions.$inferInsert)[] = [];
+        if (row2.platformFee > 0) {
+          ledger.push({
+            id: newId('com'),
+            bookingId: row2.id,
+            party: 'platform',
+            providerId,
+            rateBps: posBps,
+            amount: row2.platformFee,
+            currency: row2.currency,
+          });
+        }
+        if (row2.providerEarning > 0) {
+          ledger.push({
+            id: newId('com'),
+            bookingId: row2.id,
+            party: 'provider',
+            providerId,
+            amount: row2.providerEarning,
+            currency: row2.currency,
+          });
+        }
+        if (ledger.length) await tx.insert(commissions).values(ledger);
+
+        await tx.insert(payments).values({
+          id: newId('pay'),
+          bookingId: row2.id,
+          gateway: 'venue',
+          status: 'succeeded',
+          amount: row2.totalAmount,
+          currency: row2.currency,
+          gatewayData: { source: 'pos', method: data.paymentMethod },
           paidAt: now,
-          notes: [data.notes?.trim() || null, `POS · ${data.paymentMethod}`].filter(Boolean).join(' — '),
-        })
-        .returning();
-      const row = rows[0]!;
-
-      const ledger: (typeof commissions.$inferInsert)[] = [];
-      if (row.platformFee > 0) {
-        ledger.push({
-          id: newId('com'),
-          bookingId: row.id,
-          party: 'platform',
-          providerId,
-          rateBps: posBps,
-          amount: row.platformFee,
-          currency: row.currency,
         });
       }
-      if (row.providerEarning > 0) {
-        ledger.push({
-          id: newId('com'),
-          bookingId: row.id,
-          party: 'provider',
-          providerId,
-          amount: row.providerEarning,
-          currency: row.currency,
-        });
+
+      /* Retail lines hang off the group's primary booking. */
+      if (productLines.length) {
+        await tx.insert(bookingProducts).values(
+          productLines.map((p) => ({
+            id: newId('bpr'),
+            bookingId: created[0]!.id,
+            productId: p.productId,
+            name: p.name,
+            unitPrice: p.unitPrice,
+            quantity: p.quantity,
+            currency: branch.currency,
+          })),
+        );
       }
-      if (ledger.length) await tx.insert(commissions).values(ledger);
 
-      await tx.insert(payments).values({
-        id: newId('pay'),
-        bookingId: row.id,
-        gateway: 'venue',
-        status: 'succeeded',
-        amount: row.totalAmount,
-        currency: row.currency,
-        gatewayData: { source: 'pos', method: data.paymentMethod },
-        paidAt: now,
-      });
-
-      return row;
+      return created;
     });
 
     await logAudit({
@@ -853,29 +1038,46 @@ export async function createPosSale(input: z.infer<typeof posSaleSchema>): Promi
       actorRole: user.role,
       action: 'pos.sale',
       entity: 'booking',
-      entityId: bookingRow.id,
-      meta: { total: bookingRow.totalAmount, method: data.paymentMethod },
+      entityId: rows[0]!.id,
+      meta: { total, method: data.paymentMethod, slots: slots.length },
     });
     revalidateProvider(providerId, ['/provider/pos', '/provider/bookings', '/provider/calendar', '/provider/earnings']);
 
     return {
       ok: true,
       data: {
-        id: bookingRow.id,
-        code: bookingRow.code,
-        treatmentName: treatment.name,
-        staffName: staff?.name ?? null,
-        total: bookingRow.totalAmount,
-        platformFee: bookingRow.platformFee,
-        providerEarning: bookingRow.providerEarning,
-        staffShare,
-        currency: bookingRow.currency,
+        id: rows[0]!.id,
+        code: rows[0]!.code,
+        total,
+        platformFee,
+        spaIncome: Math.max(0, total - platformFee - sharesTotal),
+        currency: branch.currency,
         paymentMethod: data.paymentMethod,
+        items: [
+          ...lineItems,
+          ...productLines.map((p) => ({
+            name: p.name,
+            qty: p.quantity,
+            amount: p.unitPrice * p.quantity,
+          })),
+        ],
+        shares,
       },
     };
   } catch (err) {
-    if ((err as { code?: string })?.code === '23505')
-      return fail('That staff member already has an appointment starting right now.');
+    // Drizzle wraps the driver error — walk `cause` to reach the SQLSTATE.
+    let cur: unknown = err;
+    let code: string | undefined;
+    for (let depth = 0; depth < 5 && cur; depth++) {
+      const candidate = (cur as { code?: unknown }).code;
+      if (typeof candidate === 'string') {
+        code = candidate;
+        break;
+      }
+      cur = (cur as { cause?: unknown }).cause;
+    }
+    if (code === '23505')
+      return fail('A therapist in this sale already has an appointment starting at that time.');
     return fail('Could not complete the sale.');
   }
 }

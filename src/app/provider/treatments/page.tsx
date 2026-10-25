@@ -56,6 +56,7 @@ export default async function ProviderTreatmentsPage() {
     listPrice: t.listPrice,
     currency: t.currency,
     requiresTherapist: t.requiresTherapist,
+    therapistsPerBooking: t.therapistsPerBooking,
     capacity: t.capacity,
     agentApproved: t.agentApproved,
     tags: t.tags ?? [],

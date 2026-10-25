@@ -24,6 +24,7 @@ export type TreatmentRow = {
   listPrice: number;
   currency: string;
   requiresTherapist: boolean;
+  therapistsPerBooking: number;
   capacity: number;
   agentApproved: boolean;
   tags: string[];
@@ -44,12 +45,20 @@ type Draft = {
   genre: string;
   deliveryType: string;
   requiresTherapist: boolean;
+  therapistsPerBooking: number;
   agentApproved: boolean;
   tags: string[];
   status: string;
 };
 
 const DURATION_CHOICES = [30, 45, 60, 75, 90, 105, 120, 150, 180, 240];
+
+const THERAPIST_COUNT_LABELS: Record<number, string> = {
+  1: '1 therapist — one staff member per session',
+  2: '2 therapists — couples / four-hand, price is split between them',
+  3: '3 therapists — trio sessions, price is split between them',
+  4: '4 therapists — group sessions, price is split between them',
+};
 
 const EMPTY: Draft = {
   name: '',
@@ -58,6 +67,7 @@ const EMPTY: Draft = {
   genre: 'both',
   deliveryType: 'both',
   requiresTherapist: true,
+  therapistsPerBooking: 1,
   agentApproved: false,
   tags: [],
   status: 'active',
@@ -90,6 +100,7 @@ export function TreatmentManager({ treatments, currency }: { treatments: Treatme
       genre: t.genre,
       deliveryType: t.deliveryType,
       requiresTherapist: t.requiresTherapist,
+      therapistsPerBooking: t.therapistsPerBooking || 1,
       agentApproved: t.agentApproved,
       tags: t.tags ?? [],
       status: t.status,
@@ -129,6 +140,7 @@ export function TreatmentManager({ treatments, currency }: { treatments: Treatme
         genre: draft.genre as (typeof TREATMENT_GENRES)[number],
         deliveryType: draft.deliveryType as (typeof TREATMENT_DELIVERY_TYPES)[number],
         requiresTherapist: draft.requiresTherapist,
+        therapistsPerBooking: draft.requiresTherapist ? draft.therapistsPerBooking : 1,
         agentApproved: draft.agentApproved,
         tags: draft.tags as (typeof SPA_TYPES)[number][],
         status: draft.status as 'active' | 'pending',
@@ -197,6 +209,9 @@ export function TreatmentManager({ treatments, currency }: { treatments: Treatme
                   )}
                   {t.status !== 'active' && <Badge tone="warning">unpublished</Badge>}
                   {!t.requiresTherapist && <Badge tone="info">shared facility</Badge>}
+                  {t.requiresTherapist && t.therapistsPerBooking > 1 && (
+                    <Badge tone="clay">{t.therapistsPerBooking} therapists</Badge>
+                  )}
                   {t.agentApproved && <Badge tone="clay">agent-approved</Badge>}
                 </div>
                 <p className="mt-0.5 text-[13px] text-ink-500">
@@ -372,7 +387,7 @@ export function TreatmentManager({ treatments, currency }: { treatments: Treatme
           </div>
         </div>
 
-        <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2">
+        <div className="mt-4 flex flex-wrap gap-x-5 gap-y-3">
           <label className={cn('flex items-center gap-2 text-sm text-ink-700')}>
             <input type="checkbox" checked={draft.requiresTherapist} onChange={(e) => set('requiresTherapist', e.target.checked)} className="size-4 accent-[#20524c]" />
             Needs a therapist
@@ -382,6 +397,28 @@ export function TreatmentManager({ treatments, currency }: { treatments: Treatme
             Available to agents/resellers
           </label>
         </div>
+
+        {draft.requiresTherapist && (
+          <label className="mt-4 flex flex-col gap-1.5 sm:max-w-sm">
+            <span className="text-[13px] font-medium text-ink-700">Therapists per session</span>
+            <select
+              value={draft.therapistsPerBooking}
+              onChange={(e) => set('therapistsPerBooking', Number(e.target.value))}
+              className={SELECT_CLS}
+              aria-label="Therapists per session"
+            >
+              {[1, 2, 3, 4].map((n) => (
+                <option key={n} value={n}>
+                  {THERAPIST_COUNT_LABELS[n]}
+                </option>
+              ))}
+            </select>
+            <span className="text-[12.5px] text-ink-500">
+              Set this to <strong>2</strong> for couples massages — the POS then asks for two therapists and splits the
+              treatment price between them.
+            </span>
+          </label>
+        )}
 
         <div className="mt-6 flex justify-end gap-3">
           <Button variant="ghost" size="md" onClick={() => setOpen(false)} disabled={pending}>

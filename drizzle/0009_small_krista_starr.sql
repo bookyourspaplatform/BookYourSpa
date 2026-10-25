@@ -1,0 +1,1 @@
+ALTER TABLE "treatments" ADD COLUMN "therapists_per_booking" integer DEFAULT 1 NOT NULL;

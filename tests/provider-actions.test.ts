@@ -71,6 +71,7 @@ describe('saveTreatment (edit path)', () => {
       genre: 'both',
       deliveryType: 'both',
       requiresTherapist: true,
+      therapistsPerBooking: 1,
       agentApproved: false,
       tags: [],
       status: 'active',

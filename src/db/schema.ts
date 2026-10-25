@@ -396,6 +396,12 @@ export const treatments = pgTable(
     /** Duration/price/capacity tiers — the first option is the canonical booking default. */
     priceOptions: jsonb('price_options').$type<TreatmentPriceOption[]>().default([]),
     requiresTherapist: boolean('requires_therapist').notNull().default(true),
+    /**
+     * Therapists needed for one session of this treatment (couples / four-hand
+     * treatments use 2+). The POS assigns that many staff per unit sold and
+     * splits the unit price between them.
+     */
+    therapistsPerBooking: integer('therapists_per_booking').notNull().default(1),
     /** Seats/rooms available concurrently for non-therapist treatments. */
     capacity: integer('capacity').notNull().default(1),
     agentApproved: boolean('agent_approved').notNull().default(false),
