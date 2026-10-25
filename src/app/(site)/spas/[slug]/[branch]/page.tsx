@@ -21,6 +21,7 @@ import { sanitizeRichText, stripHtml } from '@/lib/security';
 import { appUrl, breadcrumbJsonLd, daySpaJsonLd, pageMetadata, treatmentJsonLd } from '@/lib/seo';
 import { JsonLd } from '@/components/json-ld';
 import { Badge } from '@/components/ui/badge';
+import { GREEN_BTN } from '@/components/ui/classes';
 import { formatMoney } from '@/lib/money';
 import { dateKeyInTz, formatDate } from '@/lib/utils';
 import { SpaCard, priceLevel } from '@/components/site/spa-card';
@@ -55,10 +56,6 @@ const PAYMENT_LABELS: Record<string, string> = {
   razorpay: 'Razorpay / e-wallet',
   venue: 'Pay at the venue',
 };
-
-/** Solid green action button — matches the sample design (rounded-xl, not a pill). */
-const GREEN_BTN =
-  'inline-flex items-center justify-center gap-2 rounded-xl bg-brand-700 px-6 font-semibold text-white shadow-sm transition hover:bg-brand-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600 disabled:opacity-50';
 
 function initialsOf(name: string) {
   return name.split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase();

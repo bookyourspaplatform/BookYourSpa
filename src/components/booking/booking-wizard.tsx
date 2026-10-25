@@ -19,6 +19,7 @@ import {
 import { Button, buttonClasses } from '@/components/ui/button';
 import { Field, Input, Textarea } from '@/components/ui/field';
 import { Badge } from '@/components/ui/badge';
+import { GREEN_BTN } from '@/components/ui/classes';
 import { formatMoney } from '@/lib/money';
 import { cn, formatDate } from '@/lib/utils';
 import { CATEGORY_LABELS } from '@/lib/catalog';
@@ -236,6 +237,19 @@ export function BookingWizard({
       return;
     }
     setCart((c) => [...c, { treatmentId: id, optionIndex: 0, persons: 1 }]);
+  }
+
+  /** Pick a duration tier — also selects the treatment if it isn't in the cart yet. */
+  function selectTier(id: string, optionIndex: number) {
+    if (!cart.some((l) => l.treatmentId === id)) {
+      if (cart.length >= MAX_CART) {
+        toast.error('Cart is full', `A single booking can hold up to ${MAX_CART} treatments.`);
+        return;
+      }
+      setCart((c) => [...c, { treatmentId: id, optionIndex, persons: 1 }]);
+      return;
+    }
+    patchLine(id, { optionIndex });
   }
 
   function bumpPersons(id: string, delta: number) {
@@ -664,14 +678,17 @@ export function BookingWizard({
                     <div
                       key={t.id}
                       className={cn(
-                        'rounded-2xl border bg-white p-4 transition',
+                        'rounded-3xl border bg-white p-5 transition',
                         active ? 'border-brand-500 ring-2 ring-brand-200' : 'border-ink-100 hover:border-brand-200',
                       )}
                     >
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                        <div className="min-w-0 flex-1 cursor-pointer" onClick={toggle}>
+                      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                        <div
+                          className="min-w-0 max-w-2xl flex-1 cursor-pointer"
+                          onClick={toggle}
+                        >
                           <div className="flex flex-wrap items-center gap-2">
-                            <h3 className="text-[16px] font-semibold text-ink-900">{t.name}</h3>
+                            <h3 className="text-[17px] font-semibold text-ink-900">{t.name}</h3>
                             {t.tags.length > 0 ? (
                               t.tags.map((tag) => (
                                 <Badge key={tag} tone="brand">{tag}</Badge>
@@ -682,13 +699,11 @@ export function BookingWizard({
                           </div>
                           {t.description && (
                             <div
-                              className="mt-1 [&:has(details[open])_p]:line-clamp-none"
+                              className="mt-1.5 [&:has(details[open])_p]:line-clamp-none"
                               onClick={(e) => e.stopPropagation()}
                             >
-                              <p className="line-clamp-2 text-[13.5px] leading-relaxed text-ink-500">
-                                {t.description}
-                              </p>
-                              <details className="group mt-0.5">
+                              <p className="text-[13.5px] leading-relaxed text-ink-600 line-clamp-2">{t.description}</p>
+                              <details className="group mt-1">
                                 <summary className="inline-flex cursor-pointer list-none items-center gap-1 text-[13px] font-medium text-brand-700 transition hover:text-brand-800 [&::-webkit-details-marker]:hidden">
                                   <span className="group-open:hidden">View more ↓</span>
                                   <span className="hidden group-open:inline">Show less ↑</span>
@@ -696,34 +711,72 @@ export function BookingWizard({
                               </details>
                             </div>
                           )}
-                          {!active && (
-                            <p className="mt-1.5 text-[13px] text-ink-400">
-                              {tiers.length > 1
-                                ? `${Math.min(...tiers.map((x) => x.durationMin))}–${Math.max(...tiers.map((x) => x.durationMin))} min`
-                                : `${t.durationMin} min`}
-                            </p>
+                          {t.benefits.length > 0 && (
+                            <div className="mt-2.5 flex flex-wrap gap-1.5">
+                              {t.benefits.slice(0, 2).map((ben) => (
+                                <span
+                                  key={ben}
+                                  className="rounded-md bg-sand-100 px-2 py-0.5 text-[11.5px] text-ink-600"
+                                >
+                                  {ben}
+                                </span>
+                              ))}
+                            </div>
                           )}
+                          {/* Duration tiers — the same pills the spa page shows; tapping one
+                              selects the treatment at that tier. */}
+                          <div
+                            className="mt-3 flex flex-wrap items-center gap-2"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {tiers.map((o, i) => (
+                              <button
+                                key={`${o.durationMin}-${i}`}
+                                type="button"
+                                onClick={() => selectTier(t.id, i)}
+                                aria-pressed={active && i === tierIdx}
+                                className={cn(
+                                  'rounded-lg px-2.5 py-1 text-[12.5px] font-medium transition',
+                                  active && i === tierIdx
+                                    ? 'bg-brand-700 text-white'
+                                    : 'bg-ink-100 text-ink-600 hover:bg-ink-200',
+                                )}
+                              >
+                                {o.durationMin} min
+                              </button>
+                            ))}
+                            {t.genreLabel && <Badge tone="info">{t.genreLabel}</Badge>}
+                            {t.deliveryLabel && (
+                              <Badge tone={t.deliveryLabel === 'Doorstep' ? 'clay' : 'neutral'}>
+                                {t.deliveryLabel}
+                              </Badge>
+                            )}
+                          </div>
                         </div>
 
-                        <button
-                          type="button"
-                          onClick={toggle}
-                          aria-pressed={active}
-                          className="flex shrink-0 flex-col items-end gap-2 rounded-xl px-1 py-0.5"
-                        >
-                          <span className={cn('text-lg font-semibold tabular-nums', active ? 'text-brand-800' : 'text-ink-900')}>
-                            {active && tiers.length > 1 && <span className="mr-1 text-[13px] font-medium text-ink-400">from</span>}
-                            {formatMoney(shownPrice, branch.currency)}
-                          </span>
-                          <span
-                            className={cn(
-                              'flex size-5 items-center justify-center rounded-full border-2 transition',
-                              active ? 'border-brand-600 bg-brand-600 text-white' : 'border-ink-300',
-                            )}
+                        <div className="flex shrink-0 flex-col items-start gap-3 sm:items-end">
+                          <p className="text-[15px] text-ink-500">
+                            {tiers.length > 1 && <span>From </span>}
+                            <span className="text-xl font-bold tabular-nums text-ink-900">
+                              {formatMoney(shownPrice, branch.currency)}
+                            </span>
+                          </p>
+                          <button
+                            type="button"
+                            onClick={toggle}
+                            aria-pressed={active}
+                            className={`${GREEN_BTN} h-10 px-5 text-[13.5px]`}
                           >
-                            {active && <Check className="size-3" strokeWidth={3} />}
-                          </span>
-                        </button>
+                            {active ? (
+                              <>
+                                <Check className="size-4" strokeWidth={3} />
+                                Selected
+                              </>
+                            ) : (
+                              'Select'
+                            )}
+                          </button>
+                        </div>
                       </div>
 
                       {active && line && (
@@ -731,26 +784,6 @@ export function BookingWizard({
                           className="mt-3 space-y-3 border-t border-ink-100 pt-3"
                           onClick={(e) => e.stopPropagation()}
                         >
-                          {tiers.length > 1 && (
-                            <div className="flex flex-wrap gap-2">
-                              {tiers.map((o, i) => (
-                                <button
-                                  key={`${o.durationMin}-${i}`}
-                                  type="button"
-                                  onClick={() => patchLine(t.id, { optionIndex: i })}
-                                  aria-pressed={i === tierIdx}
-                                  className={cn(
-                                    'rounded-xl border px-3 py-1.5 text-[13px] font-medium transition',
-                                    i === tierIdx
-                                      ? 'border-brand-700 bg-brand-700 text-white'
-                                      : 'border-ink-200 bg-white text-ink-700 hover:border-brand-300',
-                                  )}
-                                >
-                                  {o.durationMin} min · {formatMoney(o.price, branch.currency)}
-                                </button>
-                              ))}
-                            </div>
-                          )}
                           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                             <div className="flex items-center gap-1.5">
                               <span className="mr-1 text-[13px] text-ink-500">Persons</span>
@@ -779,12 +812,6 @@ export function BookingWizard({
                                 <span className="ml-1 text-[12px] text-ink-400">max {maxPersons}</span>
                               )}
                             </div>
-                            {t.genreLabel && <Badge tone="info">{t.genreLabel}</Badge>}
-                            {t.deliveryLabel && (
-                              <Badge tone={t.deliveryLabel === 'Doorstep' ? 'clay' : 'neutral'}>
-                                {t.deliveryLabel}
-                              </Badge>
-                            )}
                           </div>
                         </div>
                       )}

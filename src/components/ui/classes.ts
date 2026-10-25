@@ -13,3 +13,11 @@ export const inputCls = (invalid?: boolean) =>
   );
 
 export const selectCls = inputCls;
+
+/**
+ * Solid green action button used for every primary booking CTA — the spa
+ * page's "Book this treatment" / "Check availability" buttons and the
+ * wizard's treatment picker all share it so the two screens match.
+ */
+export const GREEN_BTN =
+  'inline-flex items-center justify-center gap-2 rounded-xl bg-brand-700 px-6 font-semibold text-white shadow-sm transition hover:bg-brand-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600 disabled:opacity-50';
