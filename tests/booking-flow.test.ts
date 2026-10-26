@@ -711,3 +711,222 @@ describe('cart booking (multi-treatment + products)', () => {
     });
   });
 });
+
+describe('couples (2-therapist team bookings)', () => {
+  const COUPLES = 'trt_test_couples';
+  /** Shared-facility treatment created by the cart suite (needs no therapist). */
+  const SAUNA_ID = 'trt_test_sauna';
+  /** Day offsets past every other test's window so bookings can't collide. */
+  const FREE_DAY_OFFSET = 11;
+  const BLOCKED_DAY_OFFSET = 12;
+  const TOGETHER_DAY_OFFSET = 13;
+
+  function daySlot(dayOffset: number, minutes: number): { date: string; startAt: Date } {
+    const d = new Date(Date.now() + dayOffset * 86_400_000);
+    const date = dateKeyInTz(d, TZ);
+    return { date, startAt: zonedToUtc(date, minutes, TZ) };
+  }
+
+  beforeAll(async () => {
+    await db.insert(T.treatments).values({
+      id: COUPLES,
+      providerId: ids.provider,
+      name: 'IT Couples Massage',
+      slug: 'it-couples-massage',
+      category: 'massage',
+      durationMin: 60,
+      listPrice: 550_000,
+      currency: 'IDR',
+      requiresTherapist: true,
+      therapistsPerBooking: 2,
+      status: 'active',
+    });
+    await db.insert(T.branchTreatments).values({
+      id: 'btr_test_couples',
+      branchId: ids.branch,
+      treatmentId: COUPLES,
+      price: 550_000,
+      active: true,
+    });
+
+    // Block therapist A for the whole of the blocked day → only B is free,
+    // so a 2-therapist treatment must find no slots that day.
+    const blocked = daySlot(BLOCKED_DAY_OFFSET, 9 * 60);
+    await db.insert(T.bookings).values({
+      id: 'bkg_test_couples_block',
+      code: 'BYS-CPBLK',
+      providerId: ids.provider,
+      branchId: ids.branch,
+      treatmentId: ids.treatment,
+      therapistId: ids.therapistA,
+      guestName: 'Blocker',
+      guestEmail: 'blocker@example.com',
+      startAt: blocked.startAt,
+      endAt: new Date(blocked.startAt.getTime() + 8 * 60 * 60_000),
+      timezone: TZ,
+      status: 'confirmed',
+      paymentStatus: 'venue',
+      channel: 'direct',
+      currency: 'IDR',
+    });
+  });
+
+  it('quotes a flat team price and flags the line for 2 therapists', async () => {
+    const quote = await quoteCart(db, {
+      branchId: ids.branch,
+      items: [{ treatmentId: COUPLES }],
+    });
+    expect(quote.lines).toHaveLength(1);
+    // The couple pays the treatment price once — not per therapist, not per person.
+    expect(quote.lines[0]).toMatchObject({
+      therapistsPerBooking: 2,
+      requiresTherapist: true,
+      persons: 1,
+      lineTotal: 550_000,
+    });
+    expect(quote.pricing.total).toBe(550_000);
+  });
+
+  it('only offers couples slots when a full team is free', async () => {
+    // Both therapists free → slots exist.
+    const free = daySlot(FREE_DAY_OFFSET, 0).date;
+    const both = await getAvailability(db, {
+      branchId: ids.branch,
+      treatmentId: COUPLES,
+      from: free,
+      days: 1,
+    });
+    expect(both.ok).toBe(true);
+    if (both.ok) expect(both.days[0]!.slots.length).toBeGreaterThan(0);
+
+    // Therapist A blocked all day → only one therapist free → no couples slot…
+    const blocked = daySlot(BLOCKED_DAY_OFFSET, 0).date;
+    const couples = await getAvailability(db, {
+      branchId: ids.branch,
+      treatmentId: COUPLES,
+      from: blocked,
+      days: 1,
+    });
+    expect(couples.ok).toBe(true);
+    if (couples.ok) expect(couples.days[0]!.slots).toHaveLength(0);
+
+    // …while a single-therapist treatment still books that day (therapist B).
+    const solo = await getAvailability(db, {
+      branchId: ids.branch,
+      treatmentId: ids.treatment,
+      from: blocked,
+      days: 1,
+    });
+    expect(solo.ok).toBe(true);
+    if (solo.ok) {
+      expect(solo.days[0]!.slots.length).toBeGreaterThan(0);
+      expect(solo.days[0]!.slots.every((s) => s.therapistId === ids.therapistB)).toBe(true);
+    }
+
+    // Preferred-pick: asking for the blocked therapist yields nothing, and on
+    // a good day a preferred pick yields only that therapist's team slots
+    // (a partner is seated alongside them at checkout).
+    const prefBlocked = await getAvailability(db, {
+      branchId: ids.branch,
+      treatmentId: COUPLES,
+      therapistId: ids.therapistA,
+      from: blocked,
+      days: 1,
+    });
+    expect(prefBlocked.ok && prefBlocked.days[0]!.slots).toHaveLength(0);
+    const prefFree = await getAvailability(db, {
+      branchId: ids.branch,
+      treatmentId: COUPLES,
+      therapistId: ids.therapistB,
+      from: free,
+      days: 1,
+    });
+    expect(prefFree.ok).toBe(true);
+    if (prefFree.ok) {
+      expect(prefFree.days[0]!.slots.length).toBeGreaterThan(0);
+      expect(prefFree.days[0]!.slots.every((s) => s.therapistId === ids.therapistB)).toBe(true);
+    }
+  });
+
+  it('seats a couples line as two grouped rows with the money split exactly', async () => {
+    const { groupId, bookings: rows, quote } = await createBookingGroup(db, {
+      branchId: ids.branch,
+      items: [
+        { treatmentId: COUPLES, startAt: daySlot(FREE_DAY_OFFSET, 10 * 60).startAt, therapistId: null },
+      ],
+      customer: { name: 'Team Guest', email: 'team@example.com' },
+      paymentMode: 'venue',
+    });
+
+    // One cart line → two booking rows (one per therapist seat), same slot.
+    expect(rows).toHaveLength(2);
+    expect(new Set(rows.map((r) => r.groupId))).toEqual(new Set([groupId]));
+    expect(rows[0]!.startAt.getTime()).toBe(rows[1]!.startAt.getTime());
+    expect(rows[0]!.endAt.getTime()).toBe(rows[1]!.endAt.getTime());
+    expect(rows[0]!.therapistId).toBeTruthy();
+    expect(rows[1]!.therapistId).toBeTruthy();
+    expect(rows[0]!.therapistId).not.toBe(rows[1]!.therapistId);
+    expect(rows.every((r) => r.treatmentId === COUPLES)).toBe(true);
+
+    // 550k → 275k + 275k, and every money column still sums to the quote.
+    expect(rows.map((r) => r.totalAmount).sort((a, b) => a - b)).toEqual([275_000, 275_000]);
+    expect(rows.reduce((s, r) => s + r.listPrice, 0)).toBe(quote.listPrice);
+    expect(rows.reduce((s, r) => s + r.totalAmount, 0)).toBe(quote.pricing.total);
+    expect(rows.reduce((s, r) => s + r.platformFee, 0)).toBe(quote.pricing.platformFee);
+    expect(rows.reduce((s, r) => s + r.providerEarning, 0)).toBe(quote.pricing.providerEarning);
+  });
+
+  it('honours the customer\u2019s preferred therapist as the first seat', async () => {
+    const { bookings: rows } = await createBookingGroup(db, {
+      branchId: ids.branch,
+      items: [
+        {
+          treatmentId: COUPLES,
+          startAt: daySlot(FREE_DAY_OFFSET, 14 * 60).startAt,
+          therapistId: ids.therapistA,
+        },
+      ],
+      customer: { name: 'Pref Guest', email: 'pref@example.com' },
+      paymentMode: 'venue',
+    });
+
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.therapistId).toBe(ids.therapistA);
+    expect(rows[1]!.therapistId).toBeTruthy();
+    expect(rows[1]!.therapistId).not.toBe(ids.therapistA);
+  });
+
+  it('runs a couples + solo Together booking as three distinct-seat rows', async () => {
+    const shared = daySlot(TOGETHER_DAY_OFFSET, 14 * 60);
+
+    // Together availability: a shared start exists only while a team is free.
+    const blocked = daySlot(BLOCKED_DAY_OFFSET, 0).date;
+    const none = await getTogetherAvailability(db, {
+      branchId: ids.branch,
+      items: [{ treatmentId: COUPLES }, { treatmentId: SAUNA_ID }],
+      from: blocked,
+      days: 1,
+    });
+    expect(none.ok && none.days[0]!.slots).toHaveLength(0);
+
+    const { bookings: rows, quote } = await createBookingGroup(db, {
+      branchId: ids.branch,
+      items: [
+        { treatmentId: COUPLES, startAt: shared.startAt, therapistId: null },
+        { treatmentId: SAUNA_ID, startAt: shared.startAt, therapistId: null },
+      ],
+      customer: { name: 'Mix Guest', email: 'mix@example.com' },
+      paymentMode: 'venue',
+    });
+
+    // 2 couple seats + 1 shared-facility line = 3 rows, same start.
+    expect(rows).toHaveLength(3);
+    expect(rows.every((r) => r.startAt.getTime() === shared.startAt.getTime())).toBe(true);
+    const coupleRows = rows.filter((r) => r.treatmentId === COUPLES);
+    expect(coupleRows).toHaveLength(2);
+    expect(coupleRows[0]!.therapistId).not.toBe(coupleRows[1]!.therapistId);
+    const saunaRow = rows.find((r) => r.treatmentId === SAUNA_ID)!;
+    expect(saunaRow.therapistId).toBeNull();
+    expect(rows.reduce((s, r) => s + r.totalAmount, 0)).toBe(quote.pricing.total);
+  });
+});

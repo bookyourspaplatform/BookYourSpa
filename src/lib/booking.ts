@@ -466,6 +466,8 @@ export type CartLine = {
   persons: number;
   lineTotal: number;
   requiresTherapist: boolean;
+  /** Therapists seated together for this line (couples / four-hand). */
+  therapistsPerBooking: number;
 };
 
 export type CartProductLine = {
@@ -549,6 +551,9 @@ export async function quoteCart(db: AppDb, input: {
       persons,
       lineTotal: unitPrice * persons,
       requiresTherapist: treatment.requiresTherapist,
+      therapistsPerBooking: treatment.requiresTherapist
+        ? Math.max(1, Math.min(treatment.therapistsPerBooking ?? 1, 4))
+        : 1,
     };
   });
 
@@ -823,13 +828,16 @@ export async function createBookingGroup(
     const candidates = new Map<number, Slot[]>();
     for (const it of items) {
       if (!it.line.requiresTherapist) continue;
+      const team = it.line.therapistsPerBooking > 1;
       const res = await fetchSlots(
-        `thr|${it.line.treatmentId}|${it.line.optionIndex ?? ''}|${it.preferredTherapistId ?? ''}|${it.date}`,
+        `thr|${it.line.treatmentId}|${it.line.optionIndex ?? ''}|${team ? '' : it.preferredTherapistId ?? ''}|${it.date}`,
         {
           branchId: branch.id,
           treatmentId: it.line.treatmentId,
           optionIndex: it.line.optionIndex,
-          therapistId: it.preferredTherapistId || null,
+          // A team needs every free therapist listed so partners can be seated;
+          // the customer's preferred pick is ordered first instead of filtered.
+          therapistId: team ? null : it.preferredTherapistId || null,
           persons: it.line.persons,
           from: it.date,
           days: 1,
@@ -842,6 +850,13 @@ export async function createBookingGroup(
       );
       if (slots.length === 0)
         throw new BookingError('That time slot was just taken — please choose another.', 'conflict', 'startAt');
+      if (team && it.preferredTherapistId) {
+        const pref = it.preferredTherapistId;
+        slots.sort(
+          (a, b) =>
+            (a.therapistId === pref ? 0 : 1) - (b.therapistId === pref ? 0 : 1),
+        );
+      }
       candidates.set(it.idx, slots);
     }
 
@@ -849,22 +864,36 @@ export async function createBookingGroup(
     const ordered = items
       .filter((i) => i.line.requiresTherapist)
       .sort((a, b) => a.startAt.getTime() - b.startAt.getTime());
-    const assignment = new Map<number, string>();
+    const assignment = new Map<number, string[]>();
     const busy: { therapistId: string; start: number; end: number }[] = [];
+    const isBusy = (tid: string, it: (typeof items)[number]) =>
+      busy.some((b) => b.therapistId === tid && b.start < it.endAt.getTime() && it.startAt.getTime() < b.end);
     const assign = (pos: number): boolean => {
       if (pos >= ordered.length) return true;
       const it = ordered[pos]!;
-      for (const cand of candidates.get(it.idx)!) {
-        const tid = cand.therapistId!;
-        if (busy.some((b) => b.therapistId === tid && b.start < it.endAt.getTime() && it.startAt.getTime() < b.end))
-          continue;
-        busy.push({ therapistId: tid, start: it.startAt.getTime(), end: it.endAt.getTime() });
-        assignment.set(it.idx, tid);
-        if (assign(pos + 1)) return true;
-        busy.pop();
-        assignment.delete(it.idx);
-      }
-      return false;
+      const pool = candidates.get(it.idx)!;
+      const need = Math.max(1, Math.min(it.line.therapistsPerBooking, 4));
+      const team: string[] = [];
+      const seat = (from: number): boolean => {
+        if (team.length === need) {
+          for (const tid of team)
+            busy.push({ therapistId: tid, start: it.startAt.getTime(), end: it.endAt.getTime() });
+          assignment.set(it.idx, [...team]);
+          if (assign(pos + 1)) return true;
+          assignment.delete(it.idx);
+          for (let k = 0; k < need; k++) busy.pop();
+          return false;
+        }
+        for (let k = from; k < pool.length; k++) {
+          const tid = pool[k]!.therapistId!;
+          if (team.includes(tid) || isBusy(tid, it)) continue;
+          team.push(tid);
+          if (seat(k + 1)) return true;
+          team.pop();
+        }
+        return false;
+      };
+      return seat(0);
     };
     if (!assign(0)) {
       throw new BookingError(
@@ -891,9 +920,42 @@ export async function createBookingGroup(
       }
     }
 
-    /* 5. Money allocation — per-row figures sum exactly to the cart quote. */
+    /* 5. One row per therapist seat — a couples line becomes two rows. */
     const { discountAmount: D, platformFee: F, agentCommission: A, total: grandTotal } = quote.pricing;
-    const rowList = items.map((it, i) => it.line.lineTotal + (i === 0 ? quote.productsTotal : 0));
+    /** Split `amount` into `n` parts that sum back to `amount` exactly. */
+    const splitAmount = (amount: number, n: number): number[] =>
+      Array.from(
+        { length: n },
+        (_, j) => Math.floor((amount * (j + 1)) / n) - Math.floor((amount * j) / n),
+      );
+
+    type RowSpec = {
+      it: (typeof items)[number];
+      therapistId: string | null;
+      persons: number;
+      list: number;
+    };
+    const specs: RowSpec[] = [];
+    for (const it of items) {
+      const need = it.line.requiresTherapist
+        ? Math.max(1, Math.min(it.line.therapistsPerBooking, 4))
+        : 1;
+      const team = assignment.get(it.idx) ?? [];
+      const perRow = Math.floor(it.line.persons / need);
+      const extra = it.line.persons % need;
+      const parts = splitAmount(it.line.lineTotal, need);
+      for (let j = 0; j < need; j++) {
+        specs.push({
+          it,
+          therapistId: it.line.requiresTherapist ? team[j] ?? null : null,
+          persons: Math.max(1, perRow + (j < extra ? 1 : 0)),
+          list: parts[j]!,
+        });
+      }
+    }
+
+    /* Money allocation — per-row figures sum exactly to the cart quote. */
+    const rowList = specs.map((s, i) => s.list + (i === 0 ? quote.productsTotal : 0));
     const rowDiscount = rowList.map((l) => (quote.listPrice > 0 ? Math.floor((D * l) / quote.listPrice) : 0));
     rowDiscount[0] = (rowDiscount[0] ?? 0) + (D - rowDiscount.reduce((s, d) => s + d, 0));
     const rowTotals = rowList.map((l, i) => l - rowDiscount[i]!);
@@ -906,9 +968,10 @@ export async function createBookingGroup(
     const groupId = newId('grp');
     const expiresAt = venue ? null : new Date(now.getTime() + holdMinutes * 60_000);
     const rows: Booking[] = [];
-    for (const it of items) {
-      const i = it.idx;
-      const providerEarning = rowTotals[i]! - rowFee[i]! - rowAgent[i]!;
+    for (let r = 0; r < specs.length; r++) {
+      const spec = specs[r]!;
+      const it = spec.it;
+      const providerEarning = rowTotals[r]! - rowFee[r]! - rowAgent[r]!;
       const [bookingRow] = await tx
         .insert(bookings)
         .values({
@@ -918,13 +981,13 @@ export async function createBookingGroup(
           providerId: branch.providerId,
           branchId: branch.id,
           treatmentId: it.line.treatmentId,
-          therapistId: it.line.requiresTherapist ? (assignment.get(it.idx) ?? null) : null,
+          therapistId: spec.therapistId,
           customerId: input.customerId ?? null,
           agentId: input.agentId ?? null,
           guestName: input.customer.name.trim(),
           guestEmail: input.customer.email.trim().toLowerCase(),
           guestPhone: input.customer.phone?.trim() || null,
-          guestCount: it.line.persons,
+          guestCount: spec.persons,
           startAt: it.startAt,
           endAt: it.endAt,
           timezone: branch.timezone,
@@ -932,15 +995,15 @@ export async function createBookingGroup(
           paymentStatus: venue ? 'venue' : 'unpaid',
           channel,
           currency: quote.currency,
-          listPrice: rowList[i]!,
-          discountAmount: rowDiscount[i]!,
-          totalAmount: rowTotals[i]!,
-          platformFee: rowFee[i]!,
-          agentCommission: rowAgent[i]!,
+          listPrice: rowList[r]!,
+          discountAmount: rowDiscount[r]!,
+          totalAmount: rowTotals[r]!,
+          platformFee: rowFee[r]!,
+          agentCommission: rowAgent[r]!,
           providerEarning,
-          couponCode: (rowDiscount[i] ?? 0) > 0 ? quote.pricing.couponCode : null,
+          couponCode: (rowDiscount[r] ?? 0) > 0 ? quote.pricing.couponCode : null,
           expiresAt,
-          notes: i === 0 ? (input.notes?.trim() || null) : null,
+          notes: r === 0 ? (input.notes?.trim() || null) : null,
         })
         .returning();
       const row = bookingRow!;

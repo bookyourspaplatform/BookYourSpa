@@ -160,6 +160,9 @@ export default async function BookPage({
           })),
           category: t.category,
           requiresTherapist: t.requiresTherapist,
+          // Couples / four-hand treatments seat a team — shown as a chip and
+          // handled by the availability engine + checkout.
+          therapistsPerBooking: t.therapistsPerBooking ?? 1,
           capacity: t.capacity,
           benefits: t.benefits,
           // Chip labels resolved here so the wizard stays display-only.

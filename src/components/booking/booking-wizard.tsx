@@ -38,6 +38,8 @@ type Treatment = {
   priceOptions: PriceTier[];
   category: string;
   requiresTherapist: boolean;
+  /** Therapists seated together — 2+ means a couples / four-hand treatment. */
+  therapistsPerBooking: number;
   /** Concurrent guests this treatment seats (per tier when given). */
   capacity: number;
   benefits: string[];
@@ -757,6 +759,11 @@ export function BookingWizard({
                                 {t.deliveryLabel}
                               </Badge>
                             )}
+                            {t.requiresTherapist && t.therapistsPerBooking > 1 && (
+                              <Badge tone="brand">
+                                {t.therapistsPerBooking} therapists
+                              </Badge>
+                            )}
                           </div>
                         </div>
 
@@ -1006,6 +1013,16 @@ export function BookingWizard({
                       />
                     ))}
                   </div>
+                  {(() => {
+                    const t = treatmentById.get(primaryLine.treatmentId);
+                    if (!t || t.therapistsPerBooking <= 1) return null;
+                    return (
+                      <p className="mt-2 text-[12.5px] text-ink-500">
+                        This treatment is performed by {t.therapistsPerBooking} therapists — pick your preferred
+                        one and we&apos;ll assign a partner automatically.
+                      </p>
+                    );
+                  })()}
                 </div>
               )}
 
@@ -1126,7 +1143,13 @@ export function BookingWizard({
                         >
                           {fmtTime(s.start)}
                           {active && s.therapistName && therapistFilter === 'any' && !isSplit && (
-                            <span className="mt-0.5 block text-[10.5px] font-normal text-white/80">{s.therapistName}</span>
+                            <span className="mt-0.5 block text-[10.5px] font-normal text-white/80">
+                              {(activeLine &&
+                              treatmentById.get(activeLine.treatmentId)?.requiresTherapist &&
+                              (treatmentById.get(activeLine.treatmentId)?.therapistsPerBooking ?? 1) > 1)
+                                ? `${treatmentById.get(activeLine.treatmentId)?.therapistsPerBooking} therapists`
+                                : s.therapistName}
+                            </span>
                           )}
                         </button>
                       );
@@ -1313,6 +1336,7 @@ export function BookingWizard({
                     const tier = tiers[Math.min(Math.max(l.optionIndex, 0), Math.max(tiers.length - 1, 0))];
                     const iso = lineTimeIso(l);
                     const therapist = lineTherapist(l, i);
+                    const couples = Boolean(t?.requiresTherapist && (t.therapistsPerBooking ?? 1) > 1);
                     const lineQuote = quote?.lines[i];
                     return (
                       <div key={l.treatmentId} className="flex items-start justify-between gap-3 px-4 py-3">
@@ -1322,7 +1346,13 @@ export function BookingWizard({
                             {tier ? `${tier.durationMin} min` : ''} · {l.persons}{' '}
                             {l.persons > 1 ? 'persons' : 'person'}
                             {iso ? ` · ${formatDate(iso, branch.timezone, { dateStyle: 'medium' })} ${fmtTime(iso)}` : ''}
-                            {therapist ? ` · ${therapist}` : ''}
+                            {couples
+                              ? ` · ${t?.therapistsPerBooking} therapists${
+                                  therapist ? ` (${therapist} + partner)` : ' assigned at the spa'
+                                }`
+                              : therapist
+                                ? ` · ${therapist}`
+                                : ''}
                           </p>
                         </div>
                         <span className="shrink-0 text-[14.5px] font-semibold tabular-nums text-ink-800">

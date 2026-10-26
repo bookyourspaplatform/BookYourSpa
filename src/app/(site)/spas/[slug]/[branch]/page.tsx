@@ -462,6 +462,9 @@ export default async function BranchDetailPage({
                     t.deliveryType === 'both'
                       ? null
                       : (DELIVERY_TYPE_LABELS[t.deliveryType] ?? t.deliveryType),
+                  // Couples / four-hand treatments seat a team — show a chip so
+                  // guests know before they pick a time.
+                  therapistsPerBooking: t.therapistsPerBooking ?? 1,
                   durationMin: t.durationMin,
                   price: t.price,
                   capacity: t.capacity,

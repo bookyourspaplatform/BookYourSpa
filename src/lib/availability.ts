@@ -159,8 +159,11 @@ export function slotsForDate(params: {
   treatmentId?: string;
   /** Guests this booking needs in a shared facility (default 1). */
   persons?: number;
+  /** Therapists that must work this slot together (couples / four-hand). */
+  therapistsPerBooking?: number;
 }): Slot[] {
   const { branch, date, durationMin, requiresTherapist, now } = params;
+  const per = Math.max(1, Math.min(params.therapistsPerBooking ?? 1, 4));
   const persons = Math.max(1, params.persons ?? 1);
   const weekday = weekdayOf(date);
   const buffer = branch.bufferMinutes;
@@ -226,7 +229,9 @@ export function slotsForDate(params: {
   /* --- Therapist-anchored slots --- */
   for (const therapist of params.therapists) {
     if (!therapist.active) continue;
-    if (params.therapistId && therapist.id !== params.therapistId) continue;
+    // Multi-therapist treatments need every candidate enumerated so a whole
+    // team can be proven free; the customer's preferred pick is filtered last.
+    if (per === 1 && params.therapistId && therapist.id !== params.therapistId) continue;
     const dayWindows = therapist.windows
       .filter((w) => w.weekday === weekday)
       .map((w) => ({ start: minutesOf(w.startTime), end: minutesOf(w.endTime) }))
@@ -283,12 +288,29 @@ export function slotsForDate(params: {
   );
   // De-duplicate exact (start, therapist) pairs produced by overlapping windows.
   const seen = new Set<string>();
-  return slots.filter((s) => {
+  const unique = slots.filter((s) => {
     const key = `${s.start.getTime()}:${s.therapistId ?? '-'}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });
+
+  if (per <= 1) {
+    if (!params.therapistId) return unique;
+    return unique.filter((s) => s.therapistId === params.therapistId);
+  }
+
+  /* Couples / four-hand: a start only exists when a full team is free. */
+  const teamAt = new Map<number, Set<string>>();
+  for (const s of unique) {
+    if (!s.therapistId) continue;
+    const team = teamAt.get(s.start.getTime()) ?? new Set<string>();
+    team.add(s.therapistId);
+    teamAt.set(s.start.getTime(), team);
+  }
+  const teamFree = unique.filter((s) => (teamAt.get(s.start.getTime())?.size ?? 0) >= per);
+  if (!params.therapistId) return teamFree;
+  return teamFree.filter((s) => s.therapistId === params.therapistId);
 }
 
 /* ------------------------------------------------------------------ */
@@ -444,6 +466,7 @@ export async function getAvailability(
         therapistId: args.therapistId ?? null,
         treatmentId: treatment.id,
         persons,
+        therapistsPerBooking: treatment.therapistsPerBooking ?? 1,
       }),
     });
   }
@@ -496,12 +519,26 @@ export async function getTogetherAvailability(
     return { ok: false, error: 'A single booking can hold up to 8 treatments.' };
 
   const perItem: { ok: true; days: DayAvailability[] }[] = [];
-  for (const item of args.items) {
+  const treatmentRows = await db.query.treatments.findMany({
+    where: inArray(treatments.id, [...new Set(args.items.map((i) => i.treatmentId))]),
+    columns: { id: true, requiresTherapist: true, therapistsPerBooking: true },
+  });
+  /** Therapists this item seats at once (0 = shared-facility treatment). */
+  const teamSize = args.items.map((item) => {
+    const t = treatmentRows.find((r) => r.id === item.treatmentId);
+    if (!t?.requiresTherapist) return 0;
+    return Math.max(1, Math.min(t.therapistsPerBooking ?? 1, 4));
+  });
+
+  for (let i = 0; i < args.items.length; i++) {
+    const item = args.items[i]!;
     const res = await getAvailability(db, {
       branchId: args.branchId,
       treatmentId: item.treatmentId,
       optionIndex: item.optionIndex ?? null,
-      therapistId: item.therapistId ?? null,
+      // Multi-therapist items list every free therapist so a whole team can be
+      // seated; the customer's preferred pick is applied when choosing them.
+      therapistId: (teamSize[i] ?? 1) > 1 ? null : item.therapistId ?? null,
       persons: item.persons ?? 1,
       from: args.from,
       days: args.days,
@@ -523,7 +560,16 @@ export async function getTogetherAvailability(
 
     const out: TogetherSlot[] = [];
     for (const startMs of [...new Set(common)].sort((a, b) => a - b)) {
-      const chosen = slotsPerItem.map((slots) => slots.filter((s) => s.start.getTime() === startMs));
+      const chosen = slotsPerItem.map((slots, i) => {
+        const atStart = slots.filter((s) => s.start.getTime() === startMs);
+        // Try the customer's preferred therapist first when picking a team.
+        const pref = args.items[i]?.therapistId;
+        if (!pref) return atStart;
+        return [
+          ...atStart.filter((s) => s.therapistId === pref),
+          ...atStart.filter((s) => s.therapistId !== pref),
+        ];
+      });
 
       // Therapist-requiring items must get distinct therapists at this instant.
       // (Slots with a null therapist belong to shared-facility treatments.)
@@ -535,15 +581,28 @@ export async function getTogetherAvailability(
           assignment[i] = chosen[i]![0] ?? null;
           return assign(i + 1, used);
         }
-        for (const cand of chosen[i]!) {
-          if (!cand.therapistId || used.has(cand.therapistId)) continue;
-          used.add(cand.therapistId);
-          assignment[i] = cand;
-          if (assign(i + 1, used)) return true;
-          used.delete(cand.therapistId);
-          assignment[i] = null;
-        }
-        return false;
+        // A couples treatment seats `teamSize[i]` distinct therapists here.
+        const need = Math.max(1, teamSize[i] ?? 1);
+        const team: Slot[] = [];
+        const seat = (from: number): boolean => {
+          if (team.length === need) {
+            for (const s of team) used.add(s.therapistId!);
+            assignment[i] = team[0]!;
+            if (assign(i + 1, used)) return true;
+            for (const s of team) used.delete(s.therapistId!);
+            return false;
+          }
+          for (let k = from; k < chosen[i]!.length; k++) {
+            const cand = chosen[i]![k]!;
+            if (!cand.therapistId || used.has(cand.therapistId)) continue;
+            if (team.some((s) => s.therapistId === cand.therapistId)) continue;
+            team.push(cand);
+            if (seat(k + 1)) return true;
+            team.pop();
+          }
+          return false;
+        };
+        return seat(0);
       };
       if (!assign(0, new Set())) continue;
 

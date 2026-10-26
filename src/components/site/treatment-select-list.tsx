@@ -19,6 +19,8 @@ export type SelectableTreatment = {
   categoryLabel: string;
   genreLabel: string | null;
   deliveryLabel: string | null;
+  /** Therapists seated together — 2+ means a couples / four-hand treatment. */
+  therapistsPerBooking: number;
   durationMin: number;
   /** Branch price — the fallback when the treatment has no tiers. */
   price: number;
@@ -203,6 +205,9 @@ export function TreatmentSelectList({
                     <Badge tone={t.deliveryLabel === 'Doorstep' ? 'clay' : 'neutral'}>
                       {t.deliveryLabel}
                     </Badge>
+                  )}
+                  {t.therapistsPerBooking > 1 && (
+                    <Badge tone="brand">{t.therapistsPerBooking} therapists</Badge>
                   )}
                 </div>
 
