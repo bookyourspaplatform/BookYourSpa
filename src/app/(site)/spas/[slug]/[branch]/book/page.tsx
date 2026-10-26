@@ -3,8 +3,8 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { AlertCircle } from 'lucide-react';
 import { getDb } from '@/db';
-import { products as productsTable } from '@/db/schema';
-import { eq } from 'drizzle-orm';
+import { products as productsTable, promotions, providerPromotions } from '@/db/schema';
+import { and, asc, eq, gte, isNotNull, isNull, lte, or } from 'drizzle-orm';
 import { getBranchDetail } from '@/lib/catalog';
 import { DELIVERY_TYPE_LABELS, GENRE_LABELS, SPA_TYPE_LABELS } from '@/lib/catalog';
 import { branchOptionPrice } from '@/lib/pricing';
@@ -91,6 +91,41 @@ export default async function BookPage({
     orderBy: (t, { asc }) => [asc(t.name)],
   });
   const branchProducts = productList.filter((p) => p.active);
+
+  // Active promotions this customer can redeem at this spa: general offers
+  // (unless this provider switched them off) or offers scoped to it.
+  const now = new Date();
+  const promoRows = await db.query.promotions.findMany({
+    where: and(
+      eq(promotions.active, true),
+      isNotNull(promotions.code),
+      isNotNull(promotions.discountType),
+      or(isNull(promotions.endsAt), gte(promotions.endsAt, now)),
+      or(isNull(promotions.startsAt), lte(promotions.startsAt, now)),
+      or(
+        and(isNull(promotions.providerId), isNull(promotions.branchId)),
+        eq(promotions.providerId, b.providerId),
+        eq(promotions.branchId, b.id),
+      ),
+    ),
+    orderBy: [asc(promotions.sortOrder)],
+  });
+  const promoChoices = await db.query.providerPromotions.findMany({
+    where: eq(providerPromotions.providerId, b.providerId),
+    columns: { promotionId: true, active: true },
+  });
+  const optedOut = new Set(promoChoices.filter((c) => !c.active).map((c) => c.promotionId));
+  const availablePromotions = promoRows
+    .filter((p) => !(p.providerId === null && p.branchId === null && optedOut.has(p.id)))
+    .map((p) => ({
+      id: p.id,
+      title: p.title,
+      summary: p.summary,
+      code: p.code!,
+      discountLabel:
+        p.discountType === 'percent' ? `${(p.discountValue ?? 0) / 100}% off` : `${p.discountValue ?? 0} off`,
+      treatmentIds: p.treatmentIds,
+    }));
 
   const jsonLd = breadcrumbJsonLd(
     [
@@ -191,6 +226,7 @@ export default async function BookPage({
             : []
         }
         preselectedItems={preselectedItems}
+        availablePromotions={availablePromotions}
         user={
           user
             ? { name: user.name, email: user.email, phone: user.phone ?? '', role: user.role }

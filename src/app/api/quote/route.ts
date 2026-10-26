@@ -55,6 +55,12 @@ export async function POST(req: Request) {
   if (!parsed.success) return jsonError('Invalid request.');
 
   const session = await getSession();
+
+  // Promotions and promo codes are a registered-customer benefit.
+  if (parsed.data.couponCode?.trim() && !session) {
+    return jsonError('Promo codes are for registered customers — please sign in to use one.', 403);
+  }
+
   const db = await getDb();
 
   let agentId: string | null = null;

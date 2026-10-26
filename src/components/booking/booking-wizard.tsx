@@ -114,6 +114,17 @@ function tiersOf(t: Treatment): PriceTier[] {
     : [{ durationMin: t.durationMin, price: t.price, capacity: t.capacity }];
 }
 
+/** A redeemable promotion offered at this spa — activated with one click. */
+type PromoOffer = {
+  id: string;
+  title: string;
+  summary: string | null;
+  code: string;
+  discountLabel: string;
+  /** null/empty = applies to every treatment. */
+  treatmentIds: string[] | null;
+};
+
 export function BookingWizard({
   providerSlug,
   branch,
@@ -123,6 +134,7 @@ export function BookingWizard({
   preselectedItems,
   user,
   guestCheckout,
+  availablePromotions = [],
 }: {
   providerSlug: string;
   branch: {
@@ -145,6 +157,8 @@ export function BookingWizard({
   preselectedItems: { treatmentId: string; optionIndex: number | null; persons?: number }[];
   user: { name: string; email: string; phone: string; role: Role } | null;
   guestCheckout: boolean;
+  /** Active promotions the signed-in customer can activate at this spa. */
+  availablePromotions?: PromoOffer[];
 }) {
   const toast = useToast();
 
@@ -189,6 +203,10 @@ export function BookingWizard({
   });
   const [couponInput, setCouponInput] = useState('');
   const [couponApplied, setCouponApplied] = useState<string | null>(null);
+  // Offers whose treatment scope matches the cart (and always the unscoped ones).
+  const visibleOffers = availablePromotions.filter(
+    (p) => !p.treatmentIds?.length || p.treatmentIds.some((id) => cart.some((c) => c.treatmentId === id)),
+  );
   const [quote, setQuote] = useState<QuoteDto | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [quoteLoadedKey, setQuoteLoadedKey] = useState<string | null>(null);
@@ -1237,21 +1255,27 @@ export function BookingWizard({
                     />
                   )}
                 </Field>
-                <Field label="Promo code">
-                  {({ id }) => (
-                    <div className="flex gap-2">
-                      <Input
-                        id={id}
-                        value={couponInput}
-                        onChange={(e) => setCouponInput(e.target.value.toUpperCase())}
-                        placeholder="WELCOME10"
-                      />
-                      <button type="button" onClick={applyCoupon} className={buttonClasses('outline', 'md', 'shrink-0')}>
-                        Apply
-                      </button>
-                    </div>
-                  )}
-                </Field>
+                {user ? (
+                  <Field label="Promo code">
+                    {({ id }) => (
+                      <div className="flex gap-2">
+                        <Input
+                          id={id}
+                          value={couponInput}
+                          onChange={(e) => setCouponInput(e.target.value.toUpperCase())}
+                          placeholder="WELCOME10"
+                        />
+                        <button type="button" onClick={applyCoupon} className={buttonClasses('outline', 'md', 'shrink-0')}>
+                          Apply
+                        </button>
+                      </div>
+                    )}
+                  </Field>
+                ) : (
+                  <Field label="Promo code" hint="Promotions can only be used by registered customers — sign in to activate one.">
+                    {() => <Input value="" placeholder="Sign in to use promotions" disabled />}
+                  </Field>
+                )}
                 <Field label="Notes for the spa (optional)" className="sm:col-span-2">
                   {({ id }) => (
                     <Textarea
@@ -1264,6 +1288,50 @@ export function BookingWizard({
                   )}
                 </Field>
               </div>
+
+              {/* One-click promotions for registered customers */}
+              {user && visibleOffers.length > 0 && (
+                <div className="mt-6">
+                  <p className="mb-2 text-[13px] font-semibold uppercase tracking-wide text-ink-400">
+                    Available promotions
+                  </p>
+                  <ul className="space-y-2">
+                    {visibleOffers.map((p) => {
+                      const applied = couponApplied === p.code;
+                      return (
+                        <li
+                          key={p.id}
+                          className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-brand-100 bg-brand-50/50 px-4 py-3"
+                        >
+                          <div className="min-w-0">
+                            <p className="flex flex-wrap items-center gap-2 text-sm font-medium text-ink-800">
+                              {p.title}
+                              <span className="rounded-full bg-brand-700 px-2 py-0.5 text-[12px] font-semibold text-white">
+                                {p.discountLabel}
+                              </span>
+                              <span className="font-mono text-[12.5px] text-ink-500">{p.code}</span>
+                            </p>
+                            {p.summary && (
+                              <p className="mt-0.5 line-clamp-1 text-[13px] text-ink-500">{p.summary}</p>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCouponInput(p.code);
+                              setCouponApplied(p.code);
+                            }}
+                            disabled={applied}
+                            className={applied ? buttonClasses('primary', 'sm') : buttonClasses('outline', 'sm')}
+                          >
+                            {applied ? '✓ Activated' : 'Activate'}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
 
               {/* Payment method */}
               <div className="mt-6">

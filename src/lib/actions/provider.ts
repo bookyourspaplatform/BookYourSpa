@@ -13,6 +13,7 @@ import {
   payments,
   products,
   promotions,
+  providerPromotions,
   providers,
   reviews,
   scheduleExceptions,
@@ -20,15 +21,12 @@ import {
   therapists,
   treatments,
   PROMO_POSITIONS,
-  SPA_CATEGORIES,
-  SPA_TYPES,
   STAFF_ROLES,
   STAFF_PAY_TYPES,
-  TREATMENT_GENRES,
-  TREATMENT_DELIVERY_TYPES,
   USER_STATUSES,
 } from '@/db/schema';
-import { sanitizeRichText } from '@/lib/security';
+import { branchPayload, branchSchema, uniqueBranchSlug } from '@/lib/branch';
+import { treatmentPayload, treatmentSchema } from '@/lib/treatment';
 import { requireUser } from '@/lib/auth/session';
 import { cancelBooking, hasSlotConflict, BookingError } from '@/lib/booking';
 import { zonedToUtc } from '@/lib/availability';
@@ -89,87 +87,8 @@ async function assertBooking(db: AppDb, providerId: string, bookingId: string) {
   return row;
 }
 
-async function uniqueBranchSlug(db: AppDb, providerId: string, base: string, ignoreId?: string) {
-  const existing = await db
-    .select({ id: branches.id, slug: branches.slug })
-    .from(branches)
-    .where(eq(branches.providerId, providerId));
-  const taken = new Set(existing.filter((r) => r.id !== ignoreId).map((r) => r.slug));
-  let candidate = slugify(base) || 'branch';
-  let i = 2;
-  while (taken.has(candidate)) candidate = `${slugify(base)}-${i++}`;
-  return candidate;
-}
 
 /* ------------------------------ branches ----------------------------- */
-
-const hoursSchema = z.array(
-  z.object({
-    day: z.number().int().min(0).max(6),
-    open: z.string().regex(/^\d{2}:\d{2}$/),
-    close: z.string().regex(/^\d{2}:\d{2}$/),
-    closed: z.boolean(),
-  }),
-);
-
-const branchSchema = z.object({
-  id: z.string().optional(),
-  name: z.string().min(2).max(120),
-  addressLine: z.string().min(3).max(240),
-  city: z.string().min(1).max(80),
-  region: z.string().max(80).optional().nullable(),
-  country: z.string().min(2).max(3),
-  timezone: z.string().min(3).max(60),
-  currency: z.string().min(3).max(3),
-  phone: z.string().max(40).optional().nullable(),
-  email: z.union([z.string().email().max(160), z.literal('')]).optional().nullable(),
-  website: z.union([z.string().url().max(240), z.literal('')]).optional().nullable(),
-  description: z.string().max(60000).optional().nullable(),
-  googleMapsUrl: z.union([z.string().url().max(500), z.literal('')]).optional().nullable(),
-  lat: z.string().max(40).optional().nullable(),
-  lng: z.string().max(40).optional().nullable(),
-  tagline: z.string().max(140).optional().nullable(),
-  shortDescription: z.string().max(160).optional().nullable(),
-  categories: z.array(z.enum(SPA_CATEGORIES)).max(6).default([]),
-  spaTypes: z.array(z.enum(SPA_TYPES)).max(20).default([]),
-  doorstepService: z.boolean().default(false),
-  showTherapistOnline: z.boolean().default(false),
-  /** Agent/reseller/affiliate fee in basis points (1500 = 15%); null = partner default. */
-  agentFeeBps: z.number().int().min(0).max(10000).optional().nullable(),
-  /** Preset amenity keys plus anything the owner types in themselves. */
-  facilities: z
-    .array(z.string().trim().min(2).max(48))
-    .max(30)
-    .default([])
-    .transform((list) => {
-      const seen = new Set<string>();
-      return list.filter((facility) => {
-        const key = facility.toLowerCase();
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
-    }),
-  images: z
-    .array(z.string().max(4_000_000))
-    .max(10)
-    .default([]),
-  hours: hoursSchema.optional(),
-  leadTimeMinutes: z.number().int().min(0).max(60 * 24 * 7),
-  maxAdvanceDays: z.number().int().min(1).max(400),
-  bufferMinutes: z.number().int().min(0).max(240),
-  slotIntervalMinutes: z.number().int().min(5).max(240),
-  // Payments are platform-configured — the form no longer edits these.
-  onlinePaymentEnabled: z.boolean().optional(),
-  paymentMethods: z.array(z.enum(['stripe', 'paypal', 'razorpay', 'venue'])).min(1).optional(),
-  status: z.enum(USER_STATUSES).optional(),
-});
-
-function cleanCoord(value: string | null | undefined): string | null {
-  const v = value?.trim();
-  if (!v) return null;
-  return /^-?\d{1,3}(\.\d+)?$/.test(v) ? v : null;
-}
 
 export async function saveBranch(input: z.infer<typeof branchSchema>): Promise<ActionResult<{ id: string }>> {
   try {
@@ -178,20 +97,9 @@ export async function saveBranch(input: z.infer<typeof branchSchema>): Promise<A
     const { db, providerId, user } = await providerCtx();
     const { id, ...data } = parsed.data;
 
-    // Shared shape for create + update. Empty strings → null; rich text sanitized;
-    // payment fields are optional (platform-configured) and omitted when absent.
-    const payload = {
-      ...data,
-      email: data.email || null,
-      website: data.website || null,
-      description: data.description ? sanitizeRichText(data.description) : null,
-      googleMapsUrl: data.googleMapsUrl || null,
-      lat: cleanCoord(data.lat),
-      lng: cleanCoord(data.lng),
-      tagline: data.tagline || null,
-      shortDescription: data.shortDescription || null,
-      images: data.images.filter((s) => /^https?:\/\//i.test(s) || /^data:image\//i.test(s)).slice(0, 10),
-    };
+    // Shared shape for create + update (cleaning lives in @/lib/branch so the
+    // admin action writes identical rows).
+    const payload = branchPayload(data);
 
     if (id) {
       await assertBranch(db, providerId, id);
@@ -470,57 +378,15 @@ export async function setBranchStatus(branchId: string, status: 'active' | 'susp
 
 /* ----------------------------- treatments ---------------------------- */
 
-const priceOptionSchema = z.object({
-  durationMin: z.number().int().min(5).max(600),
-  price: z.number().int().min(0).max(1_000_000_000),
-  capacity: z.number().int().min(1).max(50),
-});
-
-const treatmentSchema = z.object({
-  id: z.string().optional(),
-  name: z.string().min(2).max(120),
-  /** Rich-text HTML (sanitized below). */
-  description: z.string().max(40000).optional().nullable(),
-  /** Duration/price/capacity tiers; the first option drives booking defaults. */
-  priceOptions: z.array(priceOptionSchema).min(1).max(10),
-  genre: z.enum(TREATMENT_GENRES).default('both'),
-  deliveryType: z.enum(TREATMENT_DELIVERY_TYPES).default('both'),
-  requiresTherapist: z.boolean().default(true),
-  /** Therapists needed per session — couples / four-hand treatments use 2+. */
-  therapistsPerBooking: z.number().int().min(1).max(4).default(1),
-  agentApproved: z.boolean(),
-  /** Spa-type tags (shared vocabulary with the spa editor). Free-form input
-   *  is accepted and filtered to known spa types so legacy rows stay editable. */
-  tags: z.array(z.string().max(60)).max(20).default([]),
-  status: z.enum(USER_STATUSES).optional(),
-});
-
-export async function saveTreatment(input: z.infer<typeof treatmentSchema>): Promise<ActionResult<{ id: string }>> {
+export async function saveTreatment(
+  input: z.infer<typeof treatmentSchema>,
+): Promise<ActionResult<{ id: string }>> {
   try {
     const parsed = treatmentSchema.safeParse(input);
     if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? 'Invalid treatment data.');
     const { db, providerId, user } = await providerCtx();
     const data = parsed.data;
-
-    // Rich text sanitized; legacy single-price columns mirror the first option
-    // so availability/booking flows keep working unchanged.
-    const primary = data.priceOptions[0]!;
-    const knownTypes = new Set<string>(SPA_TYPES);
-    const payload = {
-      name: data.name,
-      description: data.description ? sanitizeRichText(data.description) : null,
-      priceOptions: data.priceOptions,
-      durationMin: primary.durationMin,
-      listPrice: primary.price,
-      capacity: primary.capacity,
-      genre: data.genre,
-      deliveryType: data.deliveryType,
-      requiresTherapist: data.requiresTherapist,
-      therapistsPerBooking: data.requiresTherapist ? data.therapistsPerBooking : 1,
-      agentApproved: data.agentApproved,
-      tags: data.tags.filter((t) => knownTypes.has(t)) as (typeof SPA_TYPES)[number][],
-      ...(data.status ? { status: data.status } : {}),
-    };
+    const payload = treatmentPayload(data);
 
     if (data.id) {
       await assertTreatment(db, providerId, data.id);
@@ -1429,6 +1295,57 @@ export async function setPromotionActive(promotionId: string, active: boolean): 
     await db.update(promotions).set({ active }).where(eq(promotions.id, promotionId));
     await logAudit({ actorId: user.id, actorRole: user.role, action: 'promo.status', entity: 'promotion', entityId: promotionId, meta: { active } });
     revalidateProvider(providerId, row.branchId ? [`/provider/branches/${row.branchId}`] : []);
+    revalidatePath('/deals');
+    return { ok: true };
+  } catch {
+    return fail('Could not update the promotion.');
+  }
+}
+
+/**
+ * Opt this spa in or out of a platform (general) promotion. General
+ * promotions are valid everywhere by default — this records the spa's own
+ * choice, so a supplier can deactivate any offer it does not want to run.
+ */
+export async function setProviderPromotionActive(
+  promotionId: string,
+  active: boolean,
+): Promise<ActionResult> {
+  try {
+    const { db, providerId, user } = await providerCtx();
+    const promo = await db.query.promotions.findFirst({
+      where: eq(promotions.id, promotionId),
+      columns: { id: true, providerId: true, branchId: true },
+    });
+    if (!promo) return fail('Promotion not found.');
+    if (promo.providerId || promo.branchId)
+      return fail('Only platform-wide promotions are managed here.');
+
+    const existing = await db.query.providerPromotions.findFirst({
+      where: and(
+        eq(providerPromotions.providerId, providerId),
+        eq(providerPromotions.promotionId, promotionId),
+      ),
+    });
+    if (existing) {
+      if (existing.active !== active) {
+        await db.update(providerPromotions).set({ active }).where(eq(providerPromotions.id, existing.id));
+      }
+    } else {
+      await db
+        .insert(providerPromotions)
+        .values({ id: newId('prp'), providerId, promotionId, active });
+    }
+
+    await logAudit({
+      actorId: user.id,
+      actorRole: user.role,
+      action: 'provider.promo_choice',
+      entity: 'promotion',
+      entityId: promotionId,
+      meta: { active },
+    });
+    revalidateProvider(providerId, ['/provider/promotions']);
     revalidatePath('/deals');
     return { ok: true };
   } catch {

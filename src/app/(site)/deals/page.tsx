@@ -34,7 +34,6 @@ export default async function DealsPage() {
     db.query.promotions.findMany({
       where: and(
         sql`${promotions.active} = true`,
-        sql`${promotions.position} IN ('banner','deal')`,
         notExpired(promotions.endsAt),
         notStarted(promotions.startsAt),
       ),
@@ -71,7 +70,7 @@ export default async function DealsPage() {
           <h1 className="text-2xl sm:text-3xl">Deals & offers</h1>
           <p className="mt-1.5 text-[15px] text-ink-500">
             Seasonal promotions from our spa partners, plus platform-wide promo codes. Apply the code at
-            checkout inside the booking wizard.
+            checkout inside the booking wizard — promotions can only be used by registered customers.
           </p>
         </div>
       </div>
@@ -124,7 +123,7 @@ export default async function DealsPage() {
         {/* Promo banners */}
         <section className="mt-10">
           <h2 className="flex items-center gap-2 text-lg">
-            <Sparkles className="size-5 text-clay-500" /> Seasonal offers
+            <Sparkles className="size-5 text-clay-500" /> All active promotions
           </h2>
           {promoRows.length === 0 ? (
             <p className="mt-3 rounded-2xl border border-dashed border-ink-200 bg-white px-5 py-8 text-center text-sm text-ink-500">
@@ -142,9 +141,21 @@ export default async function DealsPage() {
                   </div>
                   <div className="px-5 py-4">
                     {p.summary && <p className="text-[14px] leading-relaxed text-ink-600">{p.summary}</p>}
+                    {p.code && (
+                      <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-dashed border-brand-200 bg-brand-50 px-3 py-2">
+                        <CopyCode code={p.code} />
+                        {p.discountType && p.discountValue != null && (
+                          <span className="text-[13px] font-semibold text-brand-800">
+                            {p.discountType === 'percent' ? `${p.discountValue / 100}% off` : `${p.discountValue} off`}
+                          </span>
+                        )}
+                        <span className="text-[12px] text-ink-500">Registered members only</span>
+                      </div>
+                    )}
                     <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[13px]">
                       <span className="text-ink-400">
                         {p.branch?.name ?? 'Platform-wide'}
+                        {p.treatmentIds?.length ? ` · ${p.treatmentIds.length} selected treatments` : ''}
                         {p.endsAt ? ` · ends ${formatDate(p.endsAt, undefined, { dateStyle: 'medium' })}` : ''}
                       </span>
                       <Link

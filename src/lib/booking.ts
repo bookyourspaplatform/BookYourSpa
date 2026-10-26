@@ -11,9 +11,12 @@ import {
   commissions,
   products,
   providers,
+  promotions,
+  providerPromotions,
   therapists,
   treatments,
   type Booking,
+  type DiscountType,
 } from '@/db/schema';
 import { getSettings } from '@/lib/settings';
 import { couponApplies, pickPriceOption, branchOptionPrice, priceBooking, type PriceQuote } from '@/lib/pricing';
@@ -42,6 +45,145 @@ export class BookingError extends Error {
   ) {
     super(message);
     this.name = 'BookingError';
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Discount codes: coupons + redeemable promotions                      */
+/* ------------------------------------------------------------------ */
+
+type ResolvedDiscount = {
+  code: string;
+  /** Shape the pricing engine understands. */
+  asCoupon: {
+    code: string;
+    discountType: DiscountType;
+    discountValue: number;
+    currency: string | null;
+  };
+};
+
+/**
+ * Resolve a checkout code: first a coupon (scoped codes), then a promotion
+ * carrying a discount (general platform promotions unless a spa opted out;
+ * optional treatment scope limits which treatments are discounted).
+ */
+async function resolveDiscountCode(
+  db: AppDb,
+  opts: {
+    code: string;
+    branch: { id: string; providerId: string; currency: string };
+    /** Treatments in the cart — a scoped promotion needs at least one match. */
+    treatmentIds: string[];
+    listPrice: number;
+  },
+): Promise<ResolvedDiscount> {
+  const code = opts.code.trim().toUpperCase();
+
+  const coupon = await db.query.coupons.findFirst({ where: eq(coupons.code, code) });
+  if (coupon) {
+    const applies = couponApplies(coupon, {
+      now: new Date(),
+      listPrice: opts.listPrice,
+      branchCurrency: opts.branch.currency,
+    });
+    if (!applies.ok) throw new BookingError(applies.reason, 'coupon', 'couponCode');
+    const scopeOk =
+      coupon.scope === 'global' ||
+      (coupon.scope === 'provider' && coupon.providerId === opts.branch.providerId) ||
+      (coupon.scope === 'branch' && coupon.branchId === opts.branch.id) ||
+      (coupon.scope === 'treatment' && opts.treatmentIds.every((id) => id === coupon.treatmentId));
+    if (!scopeOk) throw new BookingError('That coupon does not apply here.', 'coupon', 'couponCode');
+    return {
+      code: coupon.code,
+      asCoupon: {
+        code: coupon.code,
+        discountType: coupon.discountType,
+        discountValue: coupon.discountValue,
+        currency: coupon.currency,
+      },
+    };
+  }
+
+  const promo = await db.query.promotions.findFirst({ where: eq(promotions.code, code) });
+  if (!promo) throw new BookingError('That coupon code was not found.', 'coupon', 'couponCode');
+  if (!promo.discountType || promo.discountValue == null)
+    throw new BookingError('That promotion cannot be applied as a discount.', 'coupon', 'couponCode');
+
+  const applies = couponApplies({ ...promo, code: promo.code! }, {
+    now: new Date(),
+    listPrice: opts.listPrice,
+    branchCurrency: opts.branch.currency,
+  });
+  if (!applies.ok) throw new BookingError(applies.reason, 'coupon', 'couponCode');
+
+  // Owner scope: a general promotion applies at every spa unless this one
+  // opted out in its supplier console; provider/branch promos stay local.
+  if (promo.branchId) {
+    if (promo.branchId !== opts.branch.id)
+      throw new BookingError('That promotion does not apply here.', 'coupon', 'couponCode');
+  } else if (promo.providerId) {
+    if (promo.providerId !== opts.branch.providerId)
+      throw new BookingError('That promotion does not apply here.', 'coupon', 'couponCode');
+  } else {
+    const choice = await db.query.providerPromotions.findFirst({
+      where: and(
+        eq(providerPromotions.providerId, opts.branch.providerId),
+        eq(providerPromotions.promotionId, promo.id),
+      ),
+    });
+    if (choice && !choice.active)
+      throw new BookingError('That promotion is not available at this spa.', 'coupon', 'couponCode');
+  }
+
+  // Treatment scope — empty/null means every treatment.
+  const scoped = promo.treatmentIds ?? [];
+  if (scoped.length && !opts.treatmentIds.some((id) => scoped.includes(id)))
+    throw new BookingError(
+      'That promotion does not apply to the treatments in your cart.',
+      'coupon',
+      'couponCode',
+    );
+
+  return {
+    code: promo.code!,
+    asCoupon: {
+      code: promo.code!,
+      discountType: promo.discountType,
+      discountValue: promo.discountValue,
+      currency: promo.currency,
+    },
+  };
+}
+
+type Tx = Parameters<Parameters<AppDb['transaction']>[0]>[0];
+
+/** Atomically redeem a code against its cap — coupons and promotions share the rule. */
+async function redeemCode(tx: Tx, code: string) {
+  const couponHit = await tx
+    .update(coupons)
+    .set({ usedCount: sql`${coupons.usedCount} + 1` })
+    .where(
+      and(
+        eq(coupons.code, code),
+        or(isNull(coupons.maxUses), eq(coupons.maxUses, 0), lt(coupons.usedCount, coupons.maxUses)),
+      ),
+    )
+    .returning({ id: coupons.id });
+  if (couponHit.length > 0) return;
+
+  const promoHit = await tx
+    .update(promotions)
+    .set({ usedCount: sql`${promotions.usedCount} + 1` })
+    .where(
+      and(
+        eq(promotions.code, code),
+        or(isNull(promotions.maxUses), eq(promotions.maxUses, 0), lt(promotions.usedCount, promotions.maxUses)),
+      ),
+    )
+    .returning({ id: promotions.id });
+  if (promoHit.length === 0) {
+    throw new BookingError('That coupon has been fully redeemed.', 'coupon', 'couponCode');
   }
 }
 
@@ -133,37 +275,19 @@ export async function quoteBooking(db: AppDb, input: QuoteInput): Promise<Quote>
     }
   }
 
-  /* --- coupon --- */
-  let couponRow: (typeof coupons.$inferSelect) | null = null;
-  if (input.couponCode?.trim()) {
-    const code = input.couponCode.trim().toUpperCase();
-    const found = await db.query.coupons.findFirst({ where: eq(coupons.code, code) });
-    if (!found) throw new BookingError('That coupon code was not found.', 'coupon', 'couponCode');
-    const applies = couponApplies(found, {
-      now: new Date(),
-      listPrice,
-      branchCurrency: branch.currency,
-    });
-    if (!applies.ok) throw new BookingError(applies.reason, 'coupon', 'couponCode');
-    const scopeOk =
-      found.scope === 'global' ||
-      (found.scope === 'provider' && found.providerId === branch.providerId) ||
-      (found.scope === 'branch' && found.branchId === branch.id) ||
-      (found.scope === 'treatment' && found.treatmentId === treatment.id);
-    if (!scopeOk) throw new BookingError('That coupon does not apply here.', 'coupon', 'couponCode');
-    couponRow = found;
-  }
+  /* --- coupon / promotion code --- */
+  const discount = input.couponCode?.trim()
+    ? await resolveDiscountCode(db, {
+        code: input.couponCode,
+        branch: { id: branch.id, providerId: branch.providerId, currency: branch.currency },
+        treatmentIds: [treatment.id],
+        listPrice,
+      })
+    : null;
 
   const pricing = priceBooking({
     listPrice,
-    coupon: couponRow
-      ? {
-          code: couponRow.code,
-          discountType: couponRow.discountType,
-          discountValue: couponRow.discountValue,
-          currency: couponRow.currency,
-        }
-      : null,
+    coupon: discount?.asCoupon ?? null,
     platformBps,
     agent: agentTerms,
   });
@@ -200,7 +324,7 @@ export async function quoteBooking(db: AppDb, input: QuoteInput): Promise<Quote>
     listPrice,
     currency: branch.currency,
     pricing,
-    couponCode: couponRow?.code ?? null,
+    couponCode: discount?.code ?? null,
     agentTerms,
     payment: { online, venue, methods: branch.paymentMethods },
   };
@@ -329,22 +453,8 @@ export async function createBooking(
     }
     const therapistId = treatment.requiresTherapist ? match.therapistId : null;
 
-    /* 3. Coupon redemption (atomic against max_uses). */
-    if (quote.couponCode) {
-      const updated = await tx
-        .update(coupons)
-        .set({ usedCount: sql`${coupons.usedCount} + 1` })
-        .where(
-          and(
-            eq(coupons.code, quote.couponCode),
-            or(isNull(coupons.maxUses), eq(coupons.maxUses, 0), lt(coupons.usedCount, coupons.maxUses)),
-          ),
-        )
-        .returning({ id: coupons.id });
-      if (updated.length === 0) {
-        throw new BookingError('That coupon has been fully redeemed.', 'coupon', 'couponCode');
-      }
-    }
+    /* 3. Code redemption (atomic against max_uses) — coupon or promotion. */
+    if (quote.couponCode) await redeemCode(tx, quote.couponCode);
 
     /* 4. Insert the booking (partial unique index backstops therapist slots). */
     let bookingRow: Booking | null = null;
@@ -618,37 +728,19 @@ export async function quoteCart(db: AppDb, input: {
     }
   }
 
-  /* --- coupon (validated once against the whole cart) --- */
-  let couponRow: (typeof coupons.$inferSelect) | null = null;
-  if (input.couponCode?.trim()) {
-    const code = input.couponCode.trim().toUpperCase();
-    const found = await db.query.coupons.findFirst({ where: eq(coupons.code, code) });
-    if (!found) throw new BookingError('That coupon code was not found.', 'coupon', 'couponCode');
-    const applies = couponApplies(found, {
-      now: new Date(),
-      listPrice,
-      branchCurrency: branch.currency,
-    });
-    if (!applies.ok) throw new BookingError(applies.reason, 'coupon', 'couponCode');
-    const scopeOk =
-      found.scope === 'global' ||
-      (found.scope === 'provider' && found.providerId === branch.providerId) ||
-      (found.scope === 'branch' && found.branchId === branch.id) ||
-      (found.scope === 'treatment' && lines.every((l) => l.treatmentId === found.treatmentId));
-    if (!scopeOk) throw new BookingError('That coupon does not apply here.', 'coupon', 'couponCode');
-    couponRow = found;
-  }
+  /* --- coupon / promotion code (validated once against the whole cart) --- */
+  const discount = input.couponCode?.trim()
+    ? await resolveDiscountCode(db, {
+        code: input.couponCode,
+        branch: { id: branch.id, providerId: branch.providerId, currency: branch.currency },
+        treatmentIds: lines.map((l) => l.treatmentId),
+        listPrice,
+      })
+    : null;
 
   const pricing = priceBooking({
     listPrice,
-    coupon: couponRow
-      ? {
-          code: couponRow.code,
-          discountType: couponRow.discountType,
-          discountValue: couponRow.discountValue,
-          currency: couponRow.currency,
-        }
-      : null,
+    coupon: discount?.asCoupon ?? null,
     platformBps,
     agent: agentTerms,
   });
@@ -682,7 +774,7 @@ export async function quoteCart(db: AppDb, input: {
     listPrice,
     currency: branch.currency,
     pricing,
-    couponCode: couponRow?.code ?? null,
+    couponCode: discount?.code ?? null,
     agentTerms,
     payment: { online, venue, methods: branch.paymentMethods },
   };
@@ -903,22 +995,8 @@ export async function createBookingGroup(
       );
     }
 
-    /* 4. Coupon redemption (atomic against max_uses) — once for the whole cart. */
-    if (quote.couponCode) {
-      const updated = await tx
-        .update(coupons)
-        .set({ usedCount: sql`${coupons.usedCount} + 1` })
-        .where(
-          and(
-            eq(coupons.code, quote.couponCode),
-            or(isNull(coupons.maxUses), eq(coupons.maxUses, 0), lt(coupons.usedCount, coupons.maxUses)),
-          ),
-        )
-        .returning({ id: coupons.id });
-      if (updated.length === 0) {
-        throw new BookingError('That coupon has been fully redeemed.', 'coupon', 'couponCode');
-      }
-    }
+    /* 4. Code redemption (atomic against max_uses) — once for the whole cart. */
+    if (quote.couponCode) await redeemCode(tx, quote.couponCode);
 
     /* 5. One row per therapist seat — a couples line becomes two rows. */
     const { discountAmount: D, platformFee: F, agentCommission: A, total: grandTotal } = quote.pricing;

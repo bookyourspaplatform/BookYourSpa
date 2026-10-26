@@ -838,18 +838,56 @@ export const promotions = pgTable(
     position: text('position', { enum: PROMO_POSITIONS }).notNull().default('banner'),
     providerId: text('provider_id').references(() => providers.id, { onDelete: 'cascade' }),
     branchId: text('branch_id').references(() => branches.id, { onDelete: 'cascade' }),
+    /** Optional promo code — registered customers activate it at checkout. */
+    code: text('code'),
+    /** Discount fields — set on platform (general) promotions customers can redeem. */
+    discountType: text('discount_type', { enum: DISCOUNT_TYPES }),
+    /** percent = basis points (1500 = 15%), fixed = minor units. */
+    discountValue: integer('discount_value'),
+    currency: text('currency'),
+    minAmount: integer('min_amount').notNull().default(0),
+    maxUses: integer('max_uses').default(0), // 0 = unlimited
+    usedCount: integer('used_count').notNull().default(0),
+    /** null/empty = every treatment; otherwise only these treatments are discounted. */
+    treatmentIds: jsonb('treatment_ids').$type<string[] | null>(),
     startsAt: timestamp('starts_at', { withTimezone: true }),
     endsAt: timestamp('ends_at', { withTimezone: true }),
     active: boolean('active').notNull().default(true),
     sortOrder: integer('sort_order').notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
-  (t) => [index('promotions_position_idx').on(t.position, t.active)],
+  (t) => [index('promotions_position_idx').on(t.position, t.active), uniqueIndex('promotions_code_unique').on(t.code)],
 );
 
 export const promotionsRelations = relations(promotions, ({ one }) => ({
   provider: one(providers, { fields: [promotions.providerId], references: [providers.id] }),
   branch: one(branches, { fields: [promotions.branchId], references: [branches.id] }),
+}));
+
+/**
+ * A spa's choice about each platform (general) promotion: valid everywhere by
+ * default, and a provider can switch it off — or back on — for itself.
+ */
+export const providerPromotions = pgTable(
+  'provider_promotions',
+  {
+    id: text('id').primaryKey(),
+    providerId: text('provider_id')
+      .notNull()
+      .references(() => providers.id, { onDelete: 'cascade' }),
+    promotionId: text('promotion_id')
+      .notNull()
+      .references(() => promotions.id, { onDelete: 'cascade' }),
+    /** true = this spa offers the promotion, false = opted out. */
+    active: boolean('active').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex('provider_promotions_unique').on(t.providerId, t.promotionId)],
+);
+
+export const providerPromotionsRelations = relations(providerPromotions, ({ one }) => ({
+  provider: one(providers, { fields: [providerPromotions.providerId], references: [providers.id] }),
+  promotion: one(promotions, { fields: [providerPromotions.promotionId], references: [promotions.id] }),
 }));
 
 /* ------------------------------------------------------------------ */
@@ -1034,6 +1072,7 @@ export type Commission = typeof commissions.$inferSelect;
 export type Payout = typeof payouts.$inferSelect;
 export type Coupon = typeof coupons.$inferSelect;
 export type Promotion = typeof promotions.$inferSelect;
+export type ProviderPromotion = typeof providerPromotions.$inferSelect;
 export type Product = typeof products.$inferSelect;
 export type Review = typeof reviews.$inferSelect;
 export type Page = typeof pages.$inferSelect;

@@ -8,7 +8,9 @@ import { Badge } from '@/components/ui/badge';
 import { formatMoney } from '@/lib/money';
 import { formatDate, cn } from '@/lib/utils';
 import { StatusActions } from '@/components/admin/status-actions';
-import { AddProviderForm } from '@/components/admin/add-provider-form';
+import { AddSpaButton } from '@/components/admin/add-provider-form';
+import { EditSpaButton } from '@/components/admin/edit-spa-button';
+import { AdminTreatmentsButton } from '@/components/admin/treatments-button';
 import { ClaimsQueue, type ClaimRow } from '@/components/admin/claims-queue';
 
 export const dynamic = 'force-dynamic';
@@ -93,7 +95,7 @@ export default async function AdminProvidersPage({
       </div>
 
       <div className="rounded-3xl border border-ink-100 bg-white p-4 sm:p-5">
-        <AddProviderForm />
+        <AddSpaButton />
       </div>
 
       <ClaimsQueue claims={claims} />
@@ -151,6 +153,10 @@ export default async function AdminProvidersPage({
                   </div>
 
                   <div className="flex flex-col items-start gap-2 lg:items-end">
+                    <div className="flex flex-wrap gap-2">
+                      <EditSpaButton providerId={p.id} name={p.name} unclaimed={!p.ownerId} />
+                      <AdminTreatmentsButton providerId={p.id} name={p.name} />
+                    </div>
                     <StatusActions kind="provider" id={p.id} status={p.status} />
                     <div className="flex gap-3 text-[13px]">
                       <Link href={`/spas/${p.slug}`} className="text-brand-700 hover:underline">

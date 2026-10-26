@@ -4,7 +4,7 @@ import { getDb, type AppDb } from '@/db';
 import * as T from '@/db/schema';
 import { hashPassword } from '@/lib/auth/password';
 import { requestProviderClaim, confirmProviderClaim } from '@/lib/actions/claims';
-import { adminCreateProvider, approveProviderClaim, rejectProviderClaim } from '@/lib/actions/admin';
+import { adminSaveSpa, approveProviderClaim, rejectProviderClaim } from '@/lib/actions/admin';
 import { getSpaDetail } from '@/lib/catalog';
 
 // Server-action environment stubs: no Next.js cache or cookie request in tests.
@@ -178,36 +178,55 @@ describe('admin approve / reject', () => {
   });
 });
 
-describe('adminCreateProvider', () => {
-  it('adds a hidden draft by default (never shows publicly)', async () => {
+/** Full supplier-form payload — every required branchSchema field. */
+function spaInput(overrides: Record<string, unknown> = {}) {
+  return {
+    name: 'Test Spa',
+    addressLine: '1 Test Street',
+    city: 'Denpasar',
+    country: 'ID',
+    timezone: 'Asia/Makassar',
+    currency: 'IDR',
+    leadTimeMinutes: 60,
+    maxAdvanceDays: 90,
+    bufferMinutes: 0,
+    slotIntervalMinutes: 30,
+    ...overrides,
+  } as Parameters<typeof adminSaveSpa>[0];
+}
+
+describe('adminSaveSpa (create)', () => {
+  it('adds a hidden draft with its first branch (never shows publicly)', async () => {
     session.required = asUser(IDS.admin, 'super_admin', 'pcl-admin@example.com');
-    const res = await adminCreateProvider({ name: 'Hidden Draft Spa', country: 'ID', publish: false });
+    const res = await adminSaveSpa(spaInput({ name: 'Hidden Draft Spa', publish: false }));
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    const created = res.data!;
+    const { providerId } = res.data!;
 
-    const provider = await db.query.providers.findFirst({ where: eq(T.providers.id, created.id) });
+    const provider = await db.query.providers.findFirst({ where: eq(T.providers.id, providerId) });
     expect(provider?.status).toBe('pending');
     expect(provider?.ownerId).toBeNull();
 
+    // The full form data lands on the branch created with the provider.
+    const branch = await db.query.branches.findFirst({ where: eq(T.branches.providerId, providerId) });
+    expect(branch?.name).toBe('Hidden Draft Spa');
+    expect(branch?.addressLine).toBe('1 Test Street');
+
     // Hidden drafts are not resolvable on the public site.
-    expect(await getSpaDetail(db, created.slug)).toBeNull();
+    expect(await getSpaDetail(db, provider!.slug)).toBeNull();
   });
 
   it('creates an owner invite claim when an email is supplied', async () => {
     session.required = asUser(IDS.admin, 'super_admin', 'pcl-admin@example.com');
-    const res = await adminCreateProvider({
-      name: 'Invited Draft Spa',
-      country: 'ID',
-      ownerEmail: 'future-owner@example.com',
-      publish: false,
-    });
+    const res = await adminSaveSpa(
+      spaInput({ name: 'Invited Draft Spa', ownerEmail: 'future-owner@example.com', publish: false }),
+    );
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    const created = res.data!;
+    const { providerId } = res.data!;
 
     const claim = await db.query.providerClaims.findFirst({
-      where: eq(T.providerClaims.providerId, created.id),
+      where: eq(T.providerClaims.providerId, providerId),
     });
     expect(claim?.status).toBe('pending');
     expect(claim?.email).toBe('future-owner@example.com');
@@ -216,18 +235,59 @@ describe('adminCreateProvider', () => {
 
   it('publishes immediately when asked (claim card becomes reachable)', async () => {
     session.required = asUser(IDS.admin, 'super_admin', 'pcl-admin@example.com');
-    const res = await adminCreateProvider({ name: 'Published Unclaimed Spa', country: 'ID', publish: true });
+    const res = await adminSaveSpa(spaInput({ name: 'Published Unclaimed Spa', publish: true }));
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    const created = res.data!;
+    const { providerId } = res.data!;
 
-    const provider = await db.query.providers.findFirst({ where: eq(T.providers.id, created.id) });
+    const provider = await db.query.providers.findFirst({ where: eq(T.providers.id, providerId) });
     expect(provider?.status).toBe('approved');
     expect(provider?.ownerId).toBeNull();
 
-    const spa = await getSpaDetail(db, created.slug);
+    const spa = await getSpaDetail(db, provider!.slug);
     expect(spa).not.toBeNull();
     expect(spa?.provider.ownerId).toBeNull(); // page renders the "Claim This Spa" card
+  });
+});
+
+describe('adminSaveSpa (edit)', () => {
+  it('edits an unclaimed spa and keeps the provider brand in step', async () => {
+    session.required = asUser(IDS.admin, 'super_admin', 'pcl-admin@example.com');
+    const created = await adminSaveSpa(spaInput({ name: 'Edit Me Spa', publish: false }));
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const { id: branchId, providerId } = created.data!;
+
+    const res = await adminSaveSpa(
+      spaInput({ id: branchId, providerId, name: 'Renamed Edit Spa', city: 'Jakarta', publish: true }),
+    );
+    expect(res.ok).toBe(true);
+
+    const branch = await db.query.branches.findFirst({ where: eq(T.branches.id, branchId) });
+    expect(branch?.name).toBe('Renamed Edit Spa');
+    expect(branch?.city).toBe('Jakarta');
+
+    const provider = await db.query.providers.findFirst({ where: eq(T.providers.id, providerId) });
+    expect(provider?.name).toBe('Renamed Edit Spa'); // unclaimed → brand follows the form
+    expect(provider?.status).toBe('approved'); // publish applied
+  });
+
+  it('never renames a claimed spa when a branch name changes', async () => {
+    session.required = asUser(IDS.admin, 'super_admin', 'pcl-admin@example.com');
+    const created = await adminSaveSpa(spaInput({ providerId: IDS.owned, name: 'Owned Branch' }));
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const { id: branchId } = created.data!;
+
+    const res = await adminSaveSpa(spaInput({ id: branchId, name: 'Owned Branch Renamed' }));
+    expect(res.ok).toBe(true);
+
+    const branch = await db.query.branches.findFirst({ where: eq(T.branches.id, branchId) });
+    expect(branch?.name).toBe('Owned Branch Renamed');
+
+    const provider = await db.query.providers.findFirst({ where: eq(T.providers.id, IDS.owned) });
+    expect(provider?.name).toBe('PCL Owned Spa'); // claimed — the owner's brand is untouched
+    expect(provider?.status).toBe('approved'); // no publish flag → status untouched
   });
 });
 

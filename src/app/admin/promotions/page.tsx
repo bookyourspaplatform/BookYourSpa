@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
-import { asc, desc } from 'drizzle-orm';
+import { asc, desc, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { coupons, promotions } from '@/db/schema';
+import { coupons, promotions, providers, treatments } from '@/db/schema';
 import { pageMetadata } from '@/lib/seo';
 import { PromotionsManager, CouponsManager } from '@/components/admin/promotions-manager';
 
@@ -14,9 +14,19 @@ export async function generateMetadata(): Promise<Metadata> {
 export default async function AdminPromotionsPage() {
   const db = await getDb();
 
-  const [promoRows, couponRows] = await Promise.all([
+  const [promoRows, couponRows, treatmentRows] = await Promise.all([
     db.query.promotions.findMany({ orderBy: [asc(promotions.sortOrder), desc(promotions.createdAt)] }),
     db.query.coupons.findMany({ orderBy: [asc(coupons.code)] }),
+    db
+      .select({
+        id: treatments.id,
+        name: treatments.name,
+        providerName: providers.name,
+      })
+      .from(treatments)
+      .innerJoin(providers, eq(treatments.providerId, providers.id))
+      .orderBy(asc(providers.name), asc(treatments.name))
+      .limit(500),
   ]);
 
   return (
@@ -29,6 +39,7 @@ export default async function AdminPromotionsPage() {
       </div>
 
       <PromotionsManager
+        treatmentOptions={treatmentRows}
         promotions={promoRows.map((p) => ({
           id: p.id,
           title: p.title,
@@ -39,6 +50,14 @@ export default async function AdminPromotionsPage() {
           endsAt: p.endsAt?.toISOString() ?? null,
           active: p.active,
           sortOrder: p.sortOrder,
+          code: p.code,
+          discountType: p.discountType,
+          discountValue: p.discountValue,
+          currency: p.currency,
+          minAmount: p.minAmount,
+          maxUses: p.maxUses ?? 0,
+          usedCount: p.usedCount,
+          treatmentIds: p.treatmentIds,
         }))}
       />
 

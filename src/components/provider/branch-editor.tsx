@@ -14,7 +14,12 @@ import {
   Trash2,
   Upload,
 } from 'lucide-react';
-import { importGoogleMaps, saveBranch } from '@/lib/actions/provider';
+import {
+  importGoogleMaps,
+  saveBranch as saveBranchAction,
+  type ActionResult,
+} from '@/lib/actions/provider';
+import type { BranchSaveInput } from '@/lib/branch';
 import { SPA_CATEGORIES, SPA_FACILITIES, SPA_TYPES } from '@/db/schema';
 import { SPA_CATEGORY_LABELS, SPA_FACILITY_LABELS, SPA_TYPE_LABELS } from '@/lib/catalog';
 import { MAX_BRANCH_IMAGES, fileToDataUrl, isRenderableImage } from '@/lib/image';
@@ -225,13 +230,21 @@ const MAX_BRANCH_FACILITIES = 30;
 /**
  * Create/edit dialog for a single spa business (branch). Pass `branch` to edit,
  * or `null` to create. Owns its own save flow and closes itself.
+ *
+ * `saveBranch` swaps the server action (the admin panel passes its own action
+ * with the same payload shape) and `extras` renders additional admin-only
+ * fields above the footer.
  */
 export function BranchEditor({
   branch,
   onClose,
+  saveBranch = saveBranchAction,
+  extras,
 }: {
   branch: BranchRow | null;
   onClose: () => void;
+  saveBranch?: (input: BranchSaveInput) => Promise<ActionResult<{ id: string }>>;
+  extras?: React.ReactNode;
 }) {
   const editingId = branch?.id ?? null;
   const [draft, setDraft] = useState<Draft>(() => toDraft(branch));
@@ -875,6 +888,8 @@ export function BranchEditor({
       </Section>
 
       {/* Payments are intentionally not editable here — configured by the platform. */}
+
+      {extras && <div className="mt-6">{extras}</div>}
 
       <div className="mt-7 flex items-center justify-between gap-3 border-t border-ink-100 pt-4">
         <a

@@ -23,7 +23,17 @@ type PromoRow = {
   endsAt: string | null;
   active: boolean;
   sortOrder: number;
+  code: string | null;
+  discountType: string | null;
+  discountValue: number | null;
+  currency: string | null;
+  minAmount: number;
+  maxUses: number;
+  usedCount: number;
+  treatmentIds: string[] | null;
 };
+
+export type TreatmentOption = { id: string; name: string; providerName: string };
 
 type PromoDraft = {
   id?: string;
@@ -35,6 +45,15 @@ type PromoDraft = {
   endsAt: string;
   active: boolean;
   sortOrder: number;
+  code: string;
+  discountMode: 'none' | 'percent' | 'fixed';
+  /** percent = basis points (1000 = 10%), fixed = minor units. */
+  discountValue: number;
+  currency: string;
+  minAmount: number;
+  maxUses: number;
+  scope: 'all' | 'selected';
+  treatmentIds: string[];
 };
 
 const EMPTY_PROMO: PromoDraft = {
@@ -46,6 +65,14 @@ const EMPTY_PROMO: PromoDraft = {
   endsAt: '',
   active: true,
   sortOrder: 0,
+  code: '',
+  discountMode: 'none',
+  discountValue: 1000,
+  currency: 'AED',
+  minAmount: 0,
+  maxUses: 0,
+  scope: 'all',
+  treatmentIds: [],
 };
 
 function toDateInput(v: string | null): string {
@@ -54,9 +81,16 @@ function toDateInput(v: string | null): string {
   return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
 }
 
-export function PromotionsManager({ promotions }: { promotions: PromoRow[] }) {
+export function PromotionsManager({
+  promotions,
+  treatmentOptions,
+}: {
+  promotions: PromoRow[];
+  treatmentOptions: TreatmentOption[];
+}) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<PromoDraft>(EMPTY_PROMO);
+  const [treatmentQuery, setTreatmentQuery] = useState('');
   const [pending, startTransition] = useTransition();
   const router = useRouter();
   const toast = useToast();
@@ -66,11 +100,37 @@ export function PromotionsManager({ promotions }: { promotions: PromoRow[] }) {
   }
 
   function save() {
+    if (draft.discountMode !== 'none' && !draft.code.trim()) {
+      toast.error('Add a promo code', 'Customers need a code to activate this discount.');
+      return;
+    }
+    if (draft.scope === 'selected' && draft.treatmentIds.length === 0) {
+      toast.error('Pick at least one treatment', 'Or switch back to “All treatments”.');
+      return;
+    }
     startTransition(async () => {
-      const res = await savePromotion(draft);
+      const res = await savePromotion({
+        ...(draft.id ? { id: draft.id } : {}),
+        title: draft.title.trim(),
+        summary: draft.summary.trim() || null,
+        linkUrl: draft.linkUrl.trim() || null,
+        position: draft.position,
+        startsAt: draft.startsAt || null,
+        endsAt: draft.endsAt || null,
+        active: draft.active,
+        sortOrder: draft.sortOrder,
+        code: draft.code.trim() ? draft.code.trim().toUpperCase() : null,
+        discountType: draft.discountMode === 'none' ? null : draft.discountMode,
+        discountValue: draft.discountMode === 'none' ? null : draft.discountValue,
+        currency: draft.discountMode === 'fixed' ? draft.currency : null,
+        minAmount: draft.minAmount,
+        maxUses: draft.maxUses,
+        treatmentIds: draft.scope === 'selected' ? draft.treatmentIds : [],
+      });
       if (res.ok) {
         toast.success(draft.id ? 'Promotion updated' : 'Promotion created');
         setOpen(false);
+        setTreatmentQuery('');
         router.refresh();
       } else {
         toast.error('Could not save', res.error);
@@ -119,13 +179,21 @@ export function PromotionsManager({ promotions }: { promotions: PromoRow[] }) {
                 <p className="flex flex-wrap items-center gap-2 text-[15px] font-medium">
                   {p.title}
                   <Badge tone="clay">{p.position}</Badge>
+                  {p.code && <Badge tone="brand">{p.code}</Badge>}
+                  {p.discountType && p.discountValue != null && (
+                    <Badge tone="success">
+                      {p.discountType === 'percent' ? `${p.discountValue / 100}% off` : `${p.discountValue} off`}
+                    </Badge>
+                  )}
                   <Badge tone={p.active ? 'success' : 'neutral'}>{p.active ? 'active' : 'off'}</Badge>
                 </p>
                 {p.summary && <p className="line-clamp-1 text-[13px] text-ink-500">{p.summary}</p>}
                 <p className="text-[12.5px] text-ink-400">
-                  {p.linkUrl ?? '/spas'} ·{' '}
+                  general — valid at all spas ·{' '}
+                  {p.treatmentIds?.length ? `${p.treatmentIds.length} selected treatments` : 'all treatments'} ·{' '}
                   {p.startsAt ? `from ${toDateInput(p.startsAt)}` : 'no start'} →{' '}
-                  {p.endsAt ? toDateInput(p.endsAt) : 'no end'} · order {p.sortOrder}
+                  {p.endsAt ? toDateInput(p.endsAt) : 'no end'}
+                  {p.code ? ` · used ${p.usedCount}/${p.maxUses || '∞'}` : ''}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -142,7 +210,16 @@ export function PromotionsManager({ promotions }: { promotions: PromoRow[] }) {
                       endsAt: toDateInput(p.endsAt),
                       active: p.active,
                       sortOrder: p.sortOrder,
+                      code: p.code ?? '',
+                      discountMode: (p.discountType as 'percent' | 'fixed' | null) ?? 'none',
+                      discountValue: p.discountValue ?? 1000,
+                      currency: p.currency ?? 'AED',
+                      minAmount: p.minAmount,
+                      maxUses: p.maxUses,
+                      scope: p.treatmentIds?.length ? 'selected' : 'all',
+                      treatmentIds: p.treatmentIds ?? [],
                     });
+                    setTreatmentQuery('');
                     setOpen(true);
                   }}
                   className={buttonClasses('outline', 'sm')}
@@ -162,7 +239,7 @@ export function PromotionsManager({ promotions }: { promotions: PromoRow[] }) {
         open={open}
         onClose={() => !pending && setOpen(false)}
         title={draft.id ? 'Edit promotion' : 'New promotion'}
-        description="Promotions with a 'deal' position appear on the deals page."
+        description="A general promotion — valid automatically at every spa. Deal-position cards show on /deals."
       >
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Title" required className="sm:col-span-2">
@@ -196,6 +273,176 @@ export function PromotionsManager({ promotions }: { promotions: PromoRow[] }) {
             <input type="checkbox" checked={draft.active} onChange={(e) => set('active', e.target.checked)} className="size-4 accent-[#20524c]" />
             Active
           </label>
+        </div>
+
+        {/* --------------------- redeemable general discount --------------------- */}
+        <div className="mt-4 space-y-4 rounded-xl border border-brand-100 bg-brand-50/40 p-3.5">
+          <div>
+            <p className="text-[13px] font-semibold uppercase tracking-wide text-ink-400">Discount code</p>
+            <p className="mt-0.5 text-[12.5px] text-ink-500">
+              Optional — with a discount, registered customers see this promotion at checkout and activate it only if
+              they want it. It is valid automatically at every spa (a spa can switch itself off in its console).
+              Leave it off for a display-only campaign.
+            </p>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Field label="Promo code">
+              {({ id }) => (
+                <Input
+                  id={id}
+                  value={draft.code}
+                  onChange={(e) => set('code', e.target.value.toUpperCase())}
+                  placeholder="SPA20"
+                  className="font-mono"
+                  maxLength={40}
+                />
+              )}
+            </Field>
+            <Field label="Discount">
+              {({ id }) => (
+                <select
+                  id={id}
+                  value={draft.discountMode}
+                  onChange={(e) => set('discountMode', e.target.value as PromoDraft['discountMode'])}
+                  className={inputCls()}
+                >
+                  <option value="none">None (display only)</option>
+                  <option value="percent">Percent off</option>
+                  <option value="fixed">Fixed amount off</option>
+                </select>
+              )}
+            </Field>
+            {draft.discountMode === 'percent' && (
+              <Field label="Percent (10 = 10)">
+                {({ id }) => (
+                  <Input
+                    id={id}
+                    type="number"
+                    min={1}
+                    max={100}
+                    step={0.5}
+                    value={draft.discountValue / 100}
+                    onChange={(e) => set('discountValue', Math.round(Number(e.target.value) * 100))}
+                  />
+                )}
+              </Field>
+            )}
+            {draft.discountMode === 'fixed' && (
+              <>
+                <Field label={`Amount (${draft.currency})`}>
+                  {({ id }) => (
+                    <Input
+                      id={id}
+                      type="number"
+                      min={1}
+                      value={draft.discountValue}
+                      onChange={(e) => set('discountValue', Number(e.target.value))}
+                    />
+                  )}
+                </Field>
+                <Field label="Currency">
+                  {({ id }) => (
+                    <select id={id} value={draft.currency} onChange={(e) => set('currency', e.target.value)} className={inputCls()}>
+                      {['IDR', 'AED', 'USD', 'SGD', 'THB', 'EUR', 'GBP'].map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </Field>
+              </>
+            )}
+            <Field label="Min. spend (0 = none)">
+              {({ id }) => (
+                <Input id={id} type="number" min={0} value={draft.minAmount} onChange={(e) => set('minAmount', Number(e.target.value))} />
+              )}
+            </Field>
+            <Field label="Max redemptions (0 = unlimited)">
+              {({ id }) => (
+                <Input id={id} type="number" min={0} value={draft.maxUses} onChange={(e) => set('maxUses', Number(e.target.value))} />
+              )}
+            </Field>
+          </div>
+
+          <div>
+            <p className="text-[13px] font-medium text-ink-700">Applies to</p>
+            <div className="mt-1.5 flex flex-wrap gap-4">
+              <label className="flex items-center gap-2 text-sm text-ink-700">
+                <input
+                  type="radio"
+                  name="promo-scope"
+                  checked={draft.scope === 'all'}
+                  onChange={() => setDraft((d) => ({ ...d, scope: 'all' }))}
+                  className="size-4 accent-[#20524c]"
+                />
+                All treatments
+              </label>
+              <label className="flex items-center gap-2 text-sm text-ink-700">
+                <input
+                  type="radio"
+                  name="promo-scope"
+                  checked={draft.scope === 'selected'}
+                  onChange={() => setDraft((d) => ({ ...d, scope: 'selected' }))}
+                  className="size-4 accent-[#20524c]"
+                />
+                Selected treatments{draft.treatmentIds.length > 0 && ` (${draft.treatmentIds.length} picked)`}
+              </label>
+            </div>
+
+            {draft.scope === 'selected' && (
+              <div className="mt-2">
+                <input
+                  value={treatmentQuery}
+                  onChange={(e) => setTreatmentQuery(e.target.value)}
+                  placeholder="Search treatments or spas…"
+                  aria-label="Search treatments"
+                  className={cn(inputCls(), 'h-10')}
+                />
+                <ul className="mt-2 max-h-56 divide-y divide-ink-50 overflow-y-auto rounded-xl border border-ink-100 bg-white">
+                  {treatmentOptions
+                    .filter((t) => {
+                      const q = treatmentQuery.trim().toLowerCase();
+                      return !q || `${t.name} ${t.providerName}`.toLowerCase().includes(q);
+                    })
+                    .slice(0, 100)
+                    .map((t) => {
+                      const on = draft.treatmentIds.includes(t.id);
+                      return (
+                        <li key={t.id}>
+                          <label className="flex cursor-pointer items-center gap-2.5 px-3 py-2 text-sm hover:bg-sand-50">
+                            <input
+                              type="checkbox"
+                              checked={on}
+                              className="size-4 accent-[#20524c]"
+                              onChange={() =>
+                                setDraft((d) => ({
+                                  ...d,
+                                  treatmentIds: on
+                                    ? d.treatmentIds.filter((x) => x !== t.id)
+                                    : [...d.treatmentIds, t.id],
+                                }))
+                              }
+                            />
+                            <span className="min-w-0 flex-1 truncate">{t.name}</span>
+                            <span className="shrink-0 text-[12px] text-ink-400">{t.providerName}</span>
+                          </label>
+                        </li>
+                      );
+                    })}
+                  {treatmentOptions.length === 0 && (
+                    <li className="px-3 py-3 text-[13px] text-ink-500">No treatments yet — add one from Providers first.</li>
+                  )}
+                </ul>
+                <p className="mt-1 text-[12px] text-ink-400">
+                  {draft.treatmentIds.length > 0
+                    ? `${draft.treatmentIds.length} treatment${draft.treatmentIds.length === 1 ? '' : 's'} picked.`
+                    : 'The discount will only apply to the treatments you pick.'}
+                </p>
+              </div>
+            )}
+          </div>
         </div>
         <div className="mt-6 flex justify-end gap-3">
           <Button variant="ghost" size="md" onClick={() => setOpen(false)} disabled={pending}>

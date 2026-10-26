@@ -98,6 +98,11 @@ export async function POST(req: Request) {
   const settings = await getSettings();
   const db = await getDb();
 
+  // Promotions and promo codes are a registered-customer benefit.
+  if (input.couponCode?.trim() && !session) {
+    return jsonError('Promo codes are for registered customers — please sign in to use one.', 403);
+  }
+
   /* --- who is booking --- */
   let customerId: string | null = null;
   let agentId: string | null = null;

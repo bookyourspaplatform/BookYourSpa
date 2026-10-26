@@ -1,12 +1,14 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { eq, and, ne, sql } from 'drizzle-orm';
+import { eq, and, ne, sql, asc, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb, type AppDb } from '@/db';
 import {
   agents,
   bookings,
+  branchTreatments,
+  branches,
   commissions,
   coupons,
   pages,
@@ -14,10 +16,15 @@ import {
   providerClaims,
   providers,
   settings,
+  therapists,
+  treatments,
   users,
   TREATMENT_CATEGORIES,
   PROMO_POSITIONS,
+  DISCOUNT_TYPES,
 } from '@/db/schema';
+import { branchPayload, branchSchema, uniqueBranchSlug } from '@/lib/branch';
+import { treatmentPayload, treatmentSchema } from '@/lib/treatment';
 import { findUserByEmail, requireUser } from '@/lib/auth/session';
 import { cancelBooking, BookingError } from '@/lib/booking';
 import { logAudit } from '@/lib/audit';
@@ -60,74 +67,283 @@ export async function setProviderStatus(id: string, status: 'approved' | 'suspen
 
 /* ------------------ spa business creation + claims ------------------ */
 
-const adminCreateProviderSchema = z.object({
-  name: z.string().trim().min(2, 'Enter the spa business name.').max(120),
-  country: z.enum(['ID', 'AE', 'SG', 'TH', 'MY', 'IN', 'GB', 'US', 'AU']),
-  tagline: z.string().trim().max(160).optional().or(z.literal('')),
+/**
+ * The full spa-business form — identical to the supplier's New/Edit spa
+ * business (branchSchema) plus the admin-only extras: owner invite + publish.
+ * No `id` creates the provider + first branch together; `providerId` only adds
+ * a branch to an existing provider; `id` edits that branch.
+ */
+const adminSpaSchema = branchSchema.extend({
+  providerId: z.string().optional(),
   ownerEmail: z.string().trim().max(200).optional().or(z.literal('')),
-  publish: z.boolean().default(false),
+  publish: z.boolean().optional(),
 });
 
+/** Pending claim invite for this email, unless one already exists. */
+async function inviteOwner(db: AppDb, providerId: string, email: string) {
+  const existing = await db.query.providerClaims.findFirst({
+    where: and(eq(providerClaims.providerId, providerId), eq(providerClaims.email, email)),
+  });
+  if (existing) return false;
+  const invitee = await findUserByEmail(email);
+  await db.insert(providerClaims).values({
+    id: newId('clm'),
+    providerId,
+    email,
+    userId: invitee?.id ?? null,
+    message: 'Owner invite added by admin',
+  });
+  return true;
+}
+
+function providerStatusPatch(publish: boolean | undefined, current: typeof providers.$inferSelect) {
+  if (publish === undefined) return {};
+  return {
+    status: (publish ? 'approved' : 'pending') as typeof current.status,
+    approvedAt: publish ? new Date() : current.approvedAt,
+    updatedAt: new Date(),
+  };
+}
+
+export type AdminSpaSaveResult = { id: string; providerId: string };
+
 /**
- * Admin adds a Provider/Spa Business for its owner to claim. The listing stays
- * hidden (pending) unless published, and unowned until a claim is approved.
+ * Admin create/edit for a spa business using the supplier's full form.
+ * - no id: creates the provider (unowned, awaiting claim) + its first branch
+ * - providerId only: adds a branch to an existing provider
+ * - id: edits that branch; unclaimed providers get name/tagline/country
+ *   kept in step, and `publish` maps onto the listing status.
  */
-export async function adminCreateProvider(
-  input: z.infer<typeof adminCreateProviderSchema>,
-): Promise<ActionResult<{ id: string; slug: string; invited: boolean }>> {
+export async function adminSaveSpa(input: z.infer<typeof adminSpaSchema>): Promise<ActionResult<AdminSpaSaveResult>> {
   try {
     const { user, db } = await adminCtx();
-    const parsed = adminCreateProviderSchema.safeParse(input);
+    const parsed = adminSpaSchema.safeParse(input);
     if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? 'Invalid spa business data.');
-    const data = parsed.data;
+    const { providerId: inputProviderId, id: branchId, ownerEmail, publish, ...branchData } = parsed.data;
 
-    let slug = slugify(data.name) || 'spa';
-    const dupe = await db.query.providers.findFirst({ where: eq(providers.slug, slug) });
-    if (dupe) slug = `${slug}-${Date.now().toString(36).slice(-4)}`;
-
-    const email = data.ownerEmail ? data.ownerEmail.toLowerCase() : null;
+    const email = ownerEmail ? ownerEmail.toLowerCase() : null;
     if (email && !z.email().safeParse(email).success) return fail('Enter a valid owner email address.');
-    const invitee = email ? await findUserByEmail(email) : null;
 
-    const id = newId('prv');
-    await db.transaction(async (tx) => {
-      await tx.insert(providers).values({
-        id,
-        ownerId: null,
-        name: data.name,
-        slug,
-        country: data.country,
-        baseCurrency: data.country === 'ID' ? 'IDR' : 'AED',
-        tagline: data.tagline || null,
-        email,
-        status: data.publish ? 'approved' : 'pending',
-        approvedAt: data.publish ? new Date() : null,
-      });
-      if (email) {
-        await tx.insert(providerClaims).values({
-          id: newId('clm'),
-          providerId: id,
-          email,
-          userId: invitee?.id ?? null,
-          message: 'Owner invite added by admin',
-        });
+    const payload = branchPayload(branchData);
+
+    /* ------------------------------- edit -------------------------------- */
+    if (branchId) {
+      const branch = await db.query.branches.findFirst({ where: eq(branches.id, branchId) });
+      if (!branch) return fail('Spa business not found.');
+      const provider = await db.query.providers.findFirst({ where: eq(providers.id, branch.providerId) });
+      if (!provider) return fail('Spa business not found.');
+      if (inputProviderId && inputProviderId !== provider.id) return fail('Spa business not found.');
+
+      const slug = await uniqueBranchSlug(db, provider.id, branchData.name, branch.id);
+      await db
+        .update(branches)
+        .set({ ...payload, slug, updatedAt: new Date() })
+        .where(eq(branches.id, branch.id));
+
+      // Unclaimed listings belong to the platform — the brand follows the form.
+      const brandSync = provider.ownerId
+        ? {}
+        : { name: branchData.name, tagline: branchData.tagline || null, country: branchData.country };
+      const providerPatch = { ...brandSync, ...providerStatusPatch(publish, provider) };
+      if (Object.keys(providerPatch).length > 0) {
+        await db.update(providers).set({ ...providerPatch, updatedAt: new Date() }).where(eq(providers.id, provider.id));
       }
-    });
+      if (email) await inviteOwner(db, provider.id, email);
+
+      await logAudit({
+        actorId: user.id,
+        actorRole: user.role,
+        action: 'admin.spa_updated',
+        entity: 'branch',
+        entityId: branch.id,
+        meta: { providerId: provider.id, invited: Boolean(email) },
+      });
+      revalidateAdmin();
+      revalidatePath('/spas');
+      revalidatePath(`/spas/${provider.slug}`);
+      revalidatePath(`/spas/${provider.slug}/${slug}`);
+      return { ok: true, data: { id: branch.id, providerId: provider.id } };
+    }
+
+    /* ------------------------------ create ------------------------------- */
+    let providerId = inputProviderId ?? null;
+    let providerSlug: string;
+
+    if (providerId) {
+      const existing = await db.query.providers.findFirst({ where: eq(providers.id, providerId) });
+      if (!existing) return fail('Spa business not found.');
+      providerSlug = existing.slug;
+      const statusPatch = providerStatusPatch(publish, existing);
+      if (Object.keys(statusPatch).length > 0) {
+        await db.update(providers).set(statusPatch).where(eq(providers.id, providerId));
+      }
+      if (email) await inviteOwner(db, providerId, email);
+    } else {
+      providerId = newId('prv');
+      providerSlug = slugify(branchData.name) || 'spa';
+      const dupe = await db.query.providers.findFirst({ where: eq(providers.slug, providerSlug) });
+      if (dupe) providerSlug = `${providerSlug}-${Date.now().toString(36).slice(-4)}`;
+      await db.insert(providers).values({
+        id: providerId,
+        ownerId: null,
+        name: branchData.name,
+        slug: providerSlug,
+        country: branchData.country,
+        baseCurrency: branchData.currency,
+        tagline: branchData.tagline || null,
+        email,
+        status: publish === false ? 'pending' : 'approved',
+        approvedAt: publish === false ? null : new Date(),
+      });
+      if (email) await inviteOwner(db, providerId, email);
+    }
+
+    const slug = await uniqueBranchSlug(db, providerId, branchData.name);
+    const [created] = await db
+      .insert(branches)
+      .values({ ...payload, id: newId('brn'), providerId, slug, status: payload.status ?? 'active' })
+      .returning({ id: branches.id });
 
     await logAudit({
       actorId: user.id,
       actorRole: user.role,
-      action: 'admin.provider_created',
-      entity: 'provider',
-      entityId: id,
-      meta: { slug, publish: data.publish, invited: Boolean(email) },
+      action: 'admin.spa_created',
+      entity: 'branch',
+      entityId: created!.id,
+      meta: { providerId, slug, publish: publish !== false, invited: Boolean(email) },
     });
     revalidateAdmin();
     revalidatePath('/spas');
-    revalidatePath(`/spas/${slug}`);
-    return { ok: true, data: { id, slug, invited: Boolean(email) } };
+    revalidatePath(`/spas/${providerSlug}`);
+    revalidatePath(`/spas/${providerSlug}/${slug}`);
+    return { ok: true, data: { id: created!.id, providerId } };
   } catch {
-    return fail('Could not create the spa business.');
+    return fail('Could not save the spa business.');
+  }
+}
+
+/** Branch row shape for the admin editor — mirrors the supplier's BranchRow. */
+export type AdminSpaBranch = {
+  id: string;
+  name: string;
+  addressLine: string;
+  city: string;
+  region: string | null;
+  country: string;
+  timezone: string;
+  currency: string;
+  phone: string | null;
+  email: string | null;
+  website: string | null;
+  googleMapsUrl: string | null;
+  lat: string | null;
+  lng: string | null;
+  tagline: string | null;
+  shortDescription: string | null;
+  categories: string[];
+  spaTypes: string[];
+  doorstepService: boolean;
+  showTherapistOnline: boolean;
+  agentFeeBps: number | null;
+  facilities: string[];
+  description: string | null;
+  images: string[];
+  hours: { day: number; open: string; close: string; closed: boolean }[];
+  leadTimeMinutes: number;
+  maxAdvanceDays: number;
+  bufferMinutes: number;
+  slotIntervalMinutes: number;
+  onlinePaymentEnabled: boolean;
+  paymentMethods: string[];
+  status: string;
+  treatmentCount: number;
+  therapistCount: number;
+};
+
+/**
+ * Everything the admin editor needs for one provider: its listing meta plus
+ * every branch (empty → the editor opens in "add first location" mode).
+ */
+export async function adminGetSpa(
+  providerId: string,
+): Promise<ActionResult<{ provider: { id: string; name: string; status: string; ownerId: string | null; slug: string }; branches: AdminSpaBranch[] }>> {
+  try {
+    const { db } = await adminCtx();
+    const provider = await db.query.providers.findFirst({ where: eq(providers.id, providerId) });
+    if (!provider) return fail('Spa business not found.');
+
+    const branchRows = await db.query.branches.findMany({
+      where: eq(branches.providerId, providerId),
+      orderBy: [asc(branches.name)],
+    });
+    const branchIds = branchRows.map((b) => b.id);
+    const [treatmentCounts, therapistCounts] = branchIds.length
+      ? await Promise.all([
+          db
+            .select({ branchId: branchTreatments.branchId, n: sql<number>`count(*)::int` })
+            .from(branchTreatments)
+            .where(and(eq(branchTreatments.active, true), inArray(branchTreatments.branchId, branchIds)))
+            .groupBy(branchTreatments.branchId),
+          db
+            .select({ branchId: therapists.branchId, n: sql<number>`count(*)::int` })
+            .from(therapists)
+            .where(and(eq(therapists.active, true), inArray(therapists.branchId, branchIds)))
+            .groupBy(therapists.branchId),
+        ])
+      : [[], []];
+
+    const branchesOut: AdminSpaBranch[] = branchRows.map((b) => ({
+      id: b.id,
+      name: b.name,
+      addressLine: b.addressLine,
+      city: b.city,
+      region: b.region,
+      country: b.country,
+      timezone: b.timezone,
+      currency: b.currency,
+      phone: b.phone,
+      email: b.email,
+      website: b.website,
+      googleMapsUrl: b.googleMapsUrl,
+      lat: b.lat,
+      lng: b.lng,
+      tagline: b.tagline,
+      shortDescription: b.shortDescription,
+      categories: b.categories ?? [],
+      spaTypes: b.spaTypes ?? [],
+      doorstepService: b.doorstepService,
+      showTherapistOnline: b.showTherapistOnline,
+      agentFeeBps: b.agentFeeBps,
+      facilities: b.facilities ?? [],
+      description: b.description,
+      images: b.images ?? [],
+      hours: b.hours,
+      leadTimeMinutes: b.leadTimeMinutes,
+      maxAdvanceDays: b.maxAdvanceDays,
+      bufferMinutes: b.bufferMinutes,
+      slotIntervalMinutes: b.slotIntervalMinutes,
+      onlinePaymentEnabled: b.onlinePaymentEnabled,
+      paymentMethods: b.paymentMethods,
+      status: b.status,
+      treatmentCount: treatmentCounts.find((t) => t.branchId === b.id)?.n ?? 0,
+      therapistCount: therapistCounts.find((t) => t.branchId === b.id)?.n ?? 0,
+    }));
+
+    return {
+      ok: true,
+      data: {
+        provider: {
+          id: provider.id,
+          name: provider.name,
+          status: provider.status,
+          ownerId: provider.ownerId,
+          slug: provider.slug,
+        },
+        branches: branchesOut,
+      },
+    };
+  } catch {
+    return fail('Could not load the spa business.');
   }
 }
 
@@ -419,6 +635,16 @@ const promoSchema = z.object({
   endsAt: z.string().optional().nullable(),
   active: z.boolean(),
   sortOrder: z.number().int().min(0).max(999),
+  /* Redeemable general promotion — valid at every spa that has not opted out. */
+  code: z.string().trim().max(40).optional().nullable(),
+  discountType: z.enum(DISCOUNT_TYPES).optional().nullable(),
+  /** percent = basis points (1500 = 15%), fixed = minor units. */
+  discountValue: z.number().int().min(0).max(1_000_000_000).optional().nullable(),
+  currency: z.string().length(3).optional().nullable(),
+  minAmount: z.number().int().min(0).default(0),
+  maxUses: z.number().int().min(0).default(0),
+  /** null/empty = every treatment; otherwise only the selected treatments. */
+  treatmentIds: z.array(z.string().max(40)).max(200).optional().nullable(),
 });
 
 export async function savePromotion(input: z.infer<typeof promoSchema>): Promise<ActionResult<{ id: string }>> {
@@ -427,6 +653,21 @@ export async function savePromotion(input: z.infer<typeof promoSchema>): Promise
     if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? 'Invalid promotion.');
     const { user, db } = await adminCtx();
     const data = parsed.data;
+
+    const code = data.code?.trim() ? data.code.trim().toUpperCase() : null;
+    if (data.discountType && !(data.discountValue && data.discountValue > 0))
+      return fail('Enter a discount value.');
+    if (data.discountType && !code)
+      return fail('A discount promotion needs a code customers can redeem.');
+    if (code) {
+      const dupe = await db.query.promotions.findFirst({
+        where: eq(promotions.code, code),
+        columns: { id: true },
+      });
+      if (dupe && dupe.id !== data.id) return fail('That code is already used by another promotion.');
+    }
+    const treatmentIds = [...new Set((data.treatmentIds ?? []).map((t) => t.trim()).filter(Boolean))];
+
     const payload = {
       title: data.title,
       summary: data.summary || null,
@@ -436,6 +677,13 @@ export async function savePromotion(input: z.infer<typeof promoSchema>): Promise
       endsAt: data.endsAt ? new Date(`${data.endsAt}T23:59:59Z`) : null,
       active: data.active,
       sortOrder: data.sortOrder,
+      code,
+      discountType: data.discountType ?? null,
+      discountValue: data.discountType ? data.discountValue : null,
+      currency: data.currency?.trim() ? data.currency.trim().toUpperCase() : null,
+      minAmount: data.minAmount ?? 0,
+      maxUses: data.maxUses ?? 0,
+      treatmentIds: treatmentIds.length ? treatmentIds : null,
     };
 
     if (data.id) {
@@ -472,6 +720,204 @@ export async function deletePromotion(id: string): Promise<ActionResult> {
     return { ok: true };
   } catch {
     return fail('Could not delete the promotion.');
+  }
+}
+
+/* ------------------------- treatments (admin) ----------------------- */
+
+const adminTreatmentSchema = treatmentSchema.extend({ providerId: z.string().min(1) });
+
+/**
+ * Admin create/edit of a treatment for any spa (the supplier form's payload,
+ * under admin auth). New treatments are offered at every active branch
+ * immediately so admin-managed listings are bookable without a second step.
+ */
+export async function adminSaveTreatment(
+  input: z.infer<typeof adminTreatmentSchema>,
+): Promise<ActionResult<{ id: string }>> {
+  try {
+    const { user, db } = await adminCtx();
+    const parsed = adminTreatmentSchema.safeParse(input);
+    if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? 'Invalid treatment data.');
+    const { providerId, id, ...rest } = parsed.data;
+    const provider = await db.query.providers.findFirst({
+      where: eq(providers.id, providerId),
+      columns: { id: true, baseCurrency: true },
+    });
+    if (!provider) return fail('Spa not found.');
+    const payload = treatmentPayload(rest);
+
+    if (id) {
+      const existing = await db.query.treatments.findFirst({
+        where: and(eq(treatments.id, id), eq(treatments.providerId, providerId)),
+        columns: { id: true },
+      });
+      if (!existing) return fail('Treatment not found.');
+      await db.update(treatments).set({ ...payload, updatedAt: new Date() }).where(eq(treatments.id, id));
+      await logAudit({
+        actorId: user.id,
+        actorRole: user.role,
+        action: 'admin.treatment_updated',
+        entity: 'treatment',
+        entityId: id,
+        meta: { providerId },
+      });
+      revalidateAdmin();
+      revalidatePath('/spas');
+      return { ok: true, data: { id } };
+    }
+
+    const dupe = await db.query.treatments.findFirst({
+      where: and(eq(treatments.providerId, providerId), eq(treatments.slug, slugify(rest.name))),
+      columns: { id: true },
+    });
+    let slug = slugify(rest.name) || 'treatment';
+    if (dupe) slug = `${slug}-${Date.now().toString(36).slice(-4)}`;
+
+    const [created] = await db
+      .insert(treatments)
+      .values({
+        ...payload,
+        id: newId('trt'),
+        providerId,
+        slug,
+        currency: provider.baseCurrency,
+      })
+      .returning({ id: treatments.id });
+
+    const branchRows = await db
+      .select({ id: branches.id })
+      .from(branches)
+      .where(and(eq(branches.providerId, providerId), eq(branches.status, 'active')));
+    if (branchRows.length) {
+      await db.insert(branchTreatments).values(
+        branchRows.map((b) => ({
+          id: newId('btr'),
+          branchId: b.id,
+          treatmentId: created!.id,
+          price: payload.listPrice,
+          active: true,
+        })),
+      );
+    }
+
+    await logAudit({
+      actorId: user.id,
+      actorRole: user.role,
+      action: 'admin.treatment_created',
+      entity: 'treatment',
+      entityId: created!.id,
+      meta: { providerId, branches: branchRows.length },
+    });
+    revalidateAdmin();
+    revalidatePath('/spas');
+    return { ok: true, data: { id: created!.id } };
+  } catch {
+    return fail('Could not save the treatment.');
+  }
+}
+
+export async function adminSetTreatmentStatus(
+  providerId: string,
+  treatmentId: string,
+  status: 'active' | 'pending',
+): Promise<ActionResult> {
+  try {
+    const { user, db } = await adminCtx();
+    const existing = await db.query.treatments.findFirst({
+      where: and(eq(treatments.id, treatmentId), eq(treatments.providerId, providerId)),
+      columns: { id: true },
+    });
+    if (!existing) return fail('Treatment not found.');
+    await db.update(treatments).set({ status, updatedAt: new Date() }).where(eq(treatments.id, treatmentId));
+    await logAudit({
+      actorId: user.id,
+      actorRole: user.role,
+      action: 'admin.treatment_status',
+      entity: 'treatment',
+      entityId: treatmentId,
+      meta: { status },
+    });
+    revalidateAdmin();
+    revalidatePath('/spas');
+    return { ok: true };
+  } catch {
+    return fail('Could not update treatment status.');
+  }
+}
+
+/** Treatment menu for the admin editor — mirrors the supplier's list shape. */
+export async function adminGetTreatments(
+  providerId: string,
+): Promise<
+  ActionResult<{
+    currency: string;
+    treatments: {
+      id: string;
+      name: string;
+      description: string | null;
+      durationMin: number;
+      listPrice: number;
+      currency: string;
+      requiresTherapist: boolean;
+      therapistsPerBooking: number;
+      capacity: number;
+      agentApproved: boolean;
+      tags: string[];
+      genre: string;
+      deliveryType: string;
+      priceOptions: { durationMin: number; price: number; capacity: number }[] | null;
+      status: string;
+      branchCount: number;
+    }[];
+  }>> {
+  try {
+    const { db } = await adminCtx();
+    const provider = await db.query.providers.findFirst({
+      where: eq(providers.id, providerId),
+      columns: { id: true, baseCurrency: true },
+    });
+    if (!provider) return fail('Spa not found.');
+
+    const rows = await db.query.treatments.findMany({
+      where: eq(treatments.providerId, providerId),
+      orderBy: [treatments.category, treatments.name],
+    });
+    const ids = rows.map((t) => t.id);
+    const counts = ids.length
+      ? await db
+          .select({ treatmentId: branchTreatments.treatmentId, n: sql<number>`count(*)::int` })
+          .from(branchTreatments)
+          .where(and(eq(branchTreatments.active, true), inArray(branchTreatments.treatmentId, ids)))
+          .groupBy(branchTreatments.treatmentId)
+      : [];
+
+    return {
+      ok: true,
+      data: {
+        currency: provider.baseCurrency,
+        treatments: rows.map((t) => ({
+          id: t.id,
+          name: t.name,
+          description: t.description,
+          durationMin: t.durationMin,
+          listPrice: t.listPrice,
+          currency: t.currency,
+          requiresTherapist: t.requiresTherapist,
+          therapistsPerBooking: t.therapistsPerBooking,
+          capacity: t.capacity,
+          agentApproved: t.agentApproved,
+          tags: t.tags ?? [],
+          genre: t.genre,
+          deliveryType: t.deliveryType,
+          priceOptions: t.priceOptions ?? [],
+          status: t.status,
+          branchCount: counts.find((c) => c.treatmentId === t.id)?.n ?? 0,
+        })),
+      },
+    };
+  } catch {
+    return fail('Could not load treatments.');
   }
 }
 

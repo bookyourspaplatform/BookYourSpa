@@ -930,3 +930,156 @@ describe('couples (2-therapist team bookings)', () => {
     expect(rows.reduce((s, r) => s + r.totalAmount, 0)).toBe(quote.pricing.total);
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* Redeemable general (platform) promotions                            */
+/* ------------------------------------------------------------------ */
+
+describe('promotion codes', () => {
+  const PROMO = 'prm_it_general';
+  const FACIAL = 'trt_it_facial';
+
+  beforeAll(async () => {
+    await db.insert(T.treatments).values({
+      id: FACIAL,
+      providerId: ids.provider,
+      name: 'IT Facial',
+      slug: 'it-facial',
+      category: 'facial',
+      durationMin: 30,
+      listPrice: 200_000,
+      currency: 'IDR',
+      requiresTherapist: true,
+      status: 'active',
+    });
+    await db.insert(T.branchTreatments).values({
+      id: 'btr_it_facial',
+      branchId: ids.branch,
+      treatmentId: FACIAL,
+      price: 200_000,
+      active: true,
+    });
+    await db.insert(T.promotions).values({
+      id: PROMO,
+      title: 'IT General Promo',
+      slug: 'it-general-promo',
+      position: 'deal',
+      code: 'ITPROMO20',
+      discountType: 'percent',
+      discountValue: 2000, // 20%
+      active: true,
+      maxUses: 0,
+    });
+  });
+
+  it('prices a single treatment with a general promotion', async () => {
+    const quote = await quoteBooking(db, {
+      branchId: ids.branch,
+      treatmentId: ids.treatment,
+      couponCode: 'ITPROMO20',
+    });
+    expect(quote.couponCode).toBe('ITPROMO20');
+    expect(quote.pricing.discountAmount).toBe(80_000); // 20% of 400k
+    expect(quote.pricing.total).toBe(320_000);
+  });
+
+  it('prices a whole cart with the promotion', async () => {
+    const quote = await quoteCart(db, {
+      branchId: ids.branch,
+      items: [{ treatmentId: ids.treatment }, { treatmentId: FACIAL }],
+      couponCode: 'ITPROMO20',
+    });
+    expect(quote.pricing.listPrice).toBe(600_000);
+    expect(quote.pricing.discountAmount).toBe(120_000);
+    expect(quote.couponCode).toBe('ITPROMO20');
+  });
+
+  it('honours the all-treatments / selected-treatments scope', async () => {
+    await db
+      .update(T.promotions)
+      .set({ treatmentIds: [FACIAL] })
+      .where(eq(T.promotions.id, PROMO));
+
+    await expect(
+      quoteBooking(db, { branchId: ids.branch, treatmentId: ids.treatment, couponCode: 'ITPROMO20' }),
+    ).rejects.toThrow(/does not apply to the treatments/);
+
+    const ok = await quoteBooking(db, {
+      branchId: ids.branch,
+      treatmentId: FACIAL,
+      couponCode: 'ITPROMO20',
+    });
+    expect(ok.pricing.discountAmount).toBe(40_000); // 20% of 200k
+
+    await db.update(T.promotions).set({ treatmentIds: null }).where(eq(T.promotions.id, PROMO));
+  });
+
+  it('respects a spa switching the general promotion off', async () => {
+    await db.insert(T.providerPromotions).values({
+      id: 'prp_it_off',
+      providerId: ids.provider,
+      promotionId: PROMO,
+      active: false,
+    });
+    await expect(
+      quoteBooking(db, { branchId: ids.branch, treatmentId: ids.treatment, couponCode: 'ITPROMO20' }),
+    ).rejects.toThrow(/not available at this spa/);
+
+    // Switching back on restores it for this spa only.
+    await db
+      .update(T.providerPromotions)
+      .set({ active: true })
+      .where(eq(T.providerPromotions.id, 'prp_it_off'));
+    const ok = await quoteBooking(db, {
+      branchId: ids.branch,
+      treatmentId: ids.treatment,
+      couponCode: 'ITPROMO20',
+    });
+    expect(ok.pricing.discountAmount).toBe(80_000);
+  });
+
+  it('rejects unknown, expired and over-cap codes', async () => {
+    await expect(
+      quoteBooking(db, { branchId: ids.branch, treatmentId: ids.treatment, couponCode: 'NOPE20' }),
+    ).rejects.toThrow(/not found/);
+
+    await db
+      .update(T.promotions)
+      .set({ endsAt: new Date(Date.now() - 86_400_000) })
+      .where(eq(T.promotions.id, PROMO));
+    await expect(
+      quoteBooking(db, { branchId: ids.branch, treatmentId: ids.treatment, couponCode: 'ITPROMO20' }),
+    ).rejects.toThrow(/expired/);
+    await db.update(T.promotions).set({ endsAt: null }).where(eq(T.promotions.id, PROMO));
+
+    await db.update(T.promotions).set({ maxUses: 1, usedCount: 1 }).where(eq(T.promotions.id, PROMO));
+    await expect(
+      quoteBooking(db, { branchId: ids.branch, treatmentId: ids.treatment, couponCode: 'ITPROMO20' }),
+    ).rejects.toThrow(/fully redeemed/);
+    await db.update(T.promotions).set({ maxUses: 0, usedCount: 0 }).where(eq(T.promotions.id, PROMO));
+  });
+
+  it('redeems the promotion once when the booking is created', async () => {
+    const before = await db.query.promotions.findFirst({
+      where: eq(T.promotions.id, PROMO),
+      columns: { usedCount: true },
+    });
+    const d = new Date(Date.now() + 6 * 86_400_000);
+    const startAt = zonedToUtc(dateKeyInTz(d, TZ), 10 * 60, TZ);
+
+    const { quote } = await createBookingGroup(db, {
+      branchId: ids.branch,
+      items: [{ treatmentId: ids.treatment, startAt, therapistId: null }],
+      customer: { name: 'Promo Fan', email: 'promo-fan@example.com' },
+      paymentMode: 'venue',
+      couponCode: 'ITPROMO20',
+    });
+    expect(quote.pricing.discountAmount).toBe(80_000);
+
+    const after = await db.query.promotions.findFirst({
+      where: eq(T.promotions.id, PROMO),
+      columns: { usedCount: true },
+    });
+    expect((after?.usedCount ?? 0) - (before?.usedCount ?? 0)).toBe(1);
+  });
+});

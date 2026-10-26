@@ -3,7 +3,12 @@
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Pencil, Plus, Sparkles, Trash2 } from 'lucide-react';
-import { saveTreatment, setTreatmentStatus } from '@/lib/actions/provider';
+import {
+  saveTreatment as defaultSaveTreatment,
+  setTreatmentStatus as defaultSetTreatmentStatus,
+  type ActionResult,
+} from '@/lib/actions/provider';
+import type { TreatmentSaveInput } from '@/lib/treatment';
 import { SPA_TYPES, TREATMENT_GENRES, TREATMENT_DELIVERY_TYPES } from '@/db/schema';
 import { SPA_TYPE_LABELS, GENRE_LABELS, DELIVERY_TYPE_LABELS } from '@/lib/catalog';
 import { Modal } from '@/components/ui/modal';
@@ -76,7 +81,24 @@ const EMPTY: Draft = {
 const SELECT_CLS =
   'h-11 w-full rounded-xl border border-ink-200 bg-white px-3 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/15';
 
-export function TreatmentManager({ treatments, currency }: { treatments: TreatmentRow[]; currency: string }) {
+/**
+ * Treatment menu — create/edit/publish with price tiers. `save`/`toggleStatus`
+ * swap the server actions (the admin panel passes its own admin-scoped ones)
+ * and `onChanged` reports any successful write so callers can reload rows.
+ */
+export function TreatmentManager({
+  treatments,
+  currency,
+  save = defaultSaveTreatment,
+  toggleStatus = defaultSetTreatmentStatus,
+  onChanged,
+}: {
+  treatments: TreatmentRow[];
+  currency: string;
+  save?: (input: TreatmentSaveInput) => Promise<ActionResult<{ id: string }>>;
+  toggleStatus?: (treatmentId: string, status: 'active' | 'pending') => Promise<ActionResult>;
+  onChanged?: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<Draft>(EMPTY);
   const [pending, startTransition] = useTransition();
@@ -130,9 +152,9 @@ export function TreatmentManager({ treatments, currency }: { treatments: Treatme
     setDraft((d) => ({ ...d, priceOptions: d.priceOptions.filter((_, idx) => idx !== i) }));
   }
 
-  function save() {
+  function submit() {
     startTransition(async () => {
-      const res = await saveTreatment({
+      const res = await save({
         ...(draft.id ? { id: draft.id } : {}),
         name: draft.name.trim(),
         description: draft.description.trim() || null,
@@ -148,6 +170,7 @@ export function TreatmentManager({ treatments, currency }: { treatments: Treatme
       if (res.ok) {
         toast.success(draft.id ? 'Treatment updated' : 'Treatment created');
         setOpen(false);
+        onChanged?.();
         router.refresh();
       } else {
         toast.error('Could not save', res.error);
@@ -158,9 +181,10 @@ export function TreatmentManager({ treatments, currency }: { treatments: Treatme
   function toggle(t: TreatmentRow) {
     startTransition(async () => {
       const next = t.status === 'active' ? 'pending' : 'active';
-      const res = await setTreatmentStatus(t.id, next);
+      const res = await toggleStatus(t.id, next);
       if (res.ok) {
         toast.success(next === 'active' ? 'Published' : 'Unpublished');
+        onChanged?.();
         router.refresh();
       } else {
         toast.error('Could not update', res.error);
@@ -424,7 +448,7 @@ export function TreatmentManager({ treatments, currency }: { treatments: Treatme
           <Button variant="ghost" size="md" onClick={() => setOpen(false)} disabled={pending}>
             Cancel
           </Button>
-          <Button size="md" onClick={save} loading={pending}>
+          <Button size="md" onClick={submit} loading={pending}>
             {draft.id ? 'Save changes' : 'Create treatment'}
           </Button>
         </div>
