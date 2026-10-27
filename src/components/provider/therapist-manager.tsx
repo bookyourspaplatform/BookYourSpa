@@ -194,9 +194,15 @@ export function TherapistManager({
         }
       } catch (err) {
         // A failed action (network, oversized photo) must not look like a save.
+        // Production React hides the real failure behind "Minified React
+        // error #441" — show a message a person can act on instead.
+        const raw = err instanceof Error ? err.message : '';
+        const minified = /Minified React error #\d+/.test(raw);
         toast.error(
           'Could not save',
-          err instanceof Error ? err.message : 'Something went wrong — please try again.',
+          minified
+            ? 'The server could not finish saving, so nothing was saved — your form is still here; please try again.'
+            : raw || 'Something went wrong — please try again.',
         );
       }
     });

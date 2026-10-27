@@ -4,7 +4,9 @@ const nextConfig: NextConfig = {
   // Staff/branch photos are stored as base64 data URLs inside the row, so a
   // server action carries the whole image. The 1 MB default silently breaks
   // larger uploads (500), so allow up to 4 MB — just under Vercel's 4.5 MB
-  // request-body cap.
+  // request-body cap. NOTE: React's action decoder independently caps a whole
+  // payload at ~1,000,000 characters (default arraySizeLimit), so the branch
+  // editor pre-checks its payload client-side and stays under that.
   experimental: {
     serverActions: {
       bodySizeLimit: '4mb',
