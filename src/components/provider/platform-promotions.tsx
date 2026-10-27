@@ -25,7 +25,7 @@ export type PlatformPromoRow = {
   validUntilHour: number | null;
   /** This spa's picked treatments for a “selected” promotion (null = not chosen yet). */
   selectedTreatmentIds: string[] | null;
-  /** Per-promotion choice for this spa — absent means "on" (valid by default). */
+  /** This spa's per-promotion choice — absent means "off" (not activated yet). */
   enabled: boolean;
 };
 
@@ -37,10 +37,10 @@ function discountLabel(p: PlatformPromoRow): string | null {
 }
 
 /**
- * General platform promotions — valid automatically at every spa, with each
- * supplier able to switch any of them off (and back on) for itself. When the
- * admin scopes a promotion to “Selected treatments”, the spa first chooses
- * which treatments the code applies to, then activates it.
+ * General platform promotions — valid at a spa only once its supplier
+ * activates them (and each supplier can switch them off again for itself).
+ * When the admin scopes a promotion to “Selected treatments”, the spa first
+ * chooses which treatments the code applies to, then activates it.
  */
 export function PlatformPromotions({
   rows,
@@ -100,7 +100,7 @@ export function PlatformPromotions({
         <Sparkles className="mx-auto size-7 text-ink-300" />
         <p className="mt-3 text-[15px] font-medium">No platform promotions right now</p>
         <p className="mt-1 text-sm text-ink-500">
-          Offers the platform runs for every spa will appear here so you can switch them on or off.
+          Offers the platform runs for every spa will appear here so you can activate the ones your spa wants.
         </p>
       </div>
     );

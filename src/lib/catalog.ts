@@ -4,6 +4,7 @@ import {
   branches,
   branchTreatments,
   promotions,
+  providerPromotions,
   providers,
   reviews,
   therapists,
@@ -420,7 +421,6 @@ export async function getSpaDetail(db: AppDb, slug: string): Promise<SpaDetail |
   ]);
 
   const branchById = new Map(branchRows.map((b) => [b.id, b]));
-  const branchIds = branchRows.map((b) => b.id);
 
   // Active treatments offered per spa business (outlet).
   const treatmentCountByBranch = new Map<string, number>();
@@ -465,14 +465,7 @@ export async function getSpaDetail(db: AppDb, slug: string): Promise<SpaDetail |
       .orderBy(desc(reviews.createdAt))
       .limit(6),
     db.query.promotions.findMany({
-      where: and(
-        eq(promotions.active, true),
-        or(
-          eq(promotions.providerId, provider.id),
-          branchIds.length ? inArray(promotions.branchId, branchIds) : sql`false`,
-          isNull(promotions.providerId),
-        ),
-      ),
+      where: and(eq(promotions.active, true), isNull(promotions.providerId), isNull(promotions.branchId)),
       orderBy: [asc(promotions.sortOrder), desc(promotions.createdAt)],
       limit: 6,
     }),
@@ -484,11 +477,15 @@ export async function getSpaDetail(db: AppDb, slug: string): Promise<SpaDetail |
     : null;
 
   const now = Date.now();
-  const promos = promoRows.filter((p) => {
-    if (p.startsAt && p.startsAt.getTime() > now) return false;
-    if (p.endsAt && p.endsAt.getTime() < now) return false;
-    return true;
-  });
+  const promos = await advertisedPlatformPromotions(
+    db,
+    provider.id,
+    promoRows.filter((p) => {
+      if (p.startsAt && p.startsAt.getTime() > now) return false;
+      if (p.endsAt && p.endsAt.getTime() < now) return false;
+      return true;
+    }),
+  );
 
   const prices = treatmentsWithPrices.flatMap((t) => t.branchPrices.map((bp) => bp.price));
   const minPrice = prices.length ? Math.min(...prices) : null;
@@ -571,7 +568,7 @@ export async function getBranchDetail(
       orderBy: [asc(therapists.name)],
     }),
     db.query.promotions.findMany({
-      where: sql`${promotions.active} = true AND (${promotions.providerId} = ${provider.id} OR ${promotions.branchId} = ${branch.id} OR ${promotions.providerId} IS NULL)`,
+      where: and(eq(promotions.active, true), isNull(promotions.providerId), isNull(promotions.branchId)),
       orderBy: [asc(promotions.sortOrder)],
       limit: 4,
     }),
@@ -613,7 +610,7 @@ export async function getBranchDetail(
       .map(({ treatment, price }) => ({ ...(treatment as Treatment), price }))
       .sort((a, b) => a.price - b.price),
     therapistList: therapistRows,
-    promos: promoRows,
+    promos: await advertisedPlatformPromotions(db, provider.id, promoRows),
     rating,
     reviews: reviewRows,
   };
@@ -683,6 +680,36 @@ export async function listSpaTypeCounts(db: AppDb): Promise<{ value: string; lab
 }
 
 /* ------------------------------- promos ------------------------------- */
+
+/**
+ * The spa page's offers box carries admin (platform) promotions only —
+ * supplier campaigns live in the “Promo codes” sidebar instead. A promotion
+ * that carries a redeemable discount code is only advertised where the
+ * supplier has activated it in its console (otherwise the code would be
+ * rejected at checkout); pure marketing banners always show.
+ */
+async function advertisedPlatformPromotions(
+  db: AppDb,
+  providerId: string,
+  rows: Promotion[],
+): Promise<Promotion[]> {
+  const redeemable = (p: Promotion) => Boolean(p.code && p.discountType && p.discountValue != null);
+  if (!rows.some(redeemable)) return rows;
+
+  const choices = await db.query.providerPromotions.findMany({
+    where: eq(providerPromotions.providerId, providerId),
+    columns: { promotionId: true, active: true, treatmentIds: true },
+  });
+  const byId = new Map(choices.map((c) => [c.promotionId, c]));
+
+  return rows.filter((p) => {
+    if (!redeemable(p)) return true;
+    const choice = byId.get(p.id);
+    if (!choice || !choice.active) return false;
+    if (p.appliesTo === 'selected' && !(choice.treatmentIds?.length)) return false;
+    return true;
+  });
+}
 
 export async function listPromotions(
   db: AppDb,

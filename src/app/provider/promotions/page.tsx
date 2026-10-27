@@ -78,9 +78,10 @@ export default async function ProviderPromotionsPage() {
     validFromHour: p.validFromHour,
     validUntilHour: p.validUntilHour,
     // This spa's own choice — for a “selected” promotion it also carries the
-    // treatments this spa picked when activating the offer.
+    // treatments this spa picked when activating the offer. Absent = not
+    // activated yet, so the promotion is not valid here.
     selectedTreatmentIds: choiceBy.get(p.id)?.treatmentIds ?? null,
-    enabled: enabledBy.get(p.id) ?? true,
+    enabled: enabledBy.get(p.id) ?? false,
   }));
 
   const ownRows = await db.query.promotions.findMany({
@@ -134,8 +135,8 @@ export default async function ProviderPromotionsPage() {
             <Sparkles className="size-4 text-clay-500" /> Platform promotions
           </h2>
           <p className="mt-0.5 text-[13px] text-ink-500">
-            General promotions the platform runs for every spa — valid here automatically. Switch any off for your
-            spa only; switch it back on whenever you like.
+            General promotions the platform runs for every spa — they are valid for your customers only after you            activate them here. The promotion&apos;s value is deducted from your price; switch one off whenever you
+            like.
           </p>
         </div>
         <PlatformPromotions
@@ -150,7 +151,8 @@ export default async function ProviderPromotionsPage() {
             <Megaphone className="size-4 text-brand-600" /> Your promotions
           </h2>
           <p className="mt-0.5 text-[13px] text-ink-500">
-            Campaigns you create — shown on your listing, your spa page and the deals page.
+            Campaigns you create — with a code they appear in your spa page&apos;s Promo codes box; all of them
+            also show on the deals page.
           </p>
         </div>
 

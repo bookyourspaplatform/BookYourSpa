@@ -14,6 +14,16 @@ export type CouponLike = {
   minAmount?: number | null;
 };
 
+/**
+ * Who funds the discount:
+ * - 'provider' — a promotion's value is deducted from the supplier's price
+ *   (platform fee and agent commission are computed on the list price, so the
+ *   provider's slice absorbs the whole discount).
+ * - 'platform' — an admin promo code: the platform owns it, so the supplier's
+ *   earning is unchanged and the discount comes out of the platform's fee.
+ */
+export type DiscountBearer = 'provider' | 'platform';
+
 export type AgentTermsLike = {
   commissionBps: number;
   /** Net reseller price, when the agent has a special rate for this treatment. */
@@ -44,27 +54,45 @@ export function priceBooking(input: {
   coupon?: CouponLike | null;
   platformBps: number;
   agent?: AgentTermsLike | null;
+  discountBearer?: DiscountBearer;
 }): PriceQuote {
-  const { listPrice, coupon, platformBps, agent } = input;
+  const { listPrice, coupon, platformBps, agent, discountBearer } = input;
   const discountAmount = coupon ? applyCoupon(coupon, listPrice) : 0;
   const total = Math.max(0, listPrice - discountAmount);
-  const rawPlatformFee = Math.round((total * platformBps) / 10_000);
+
+  // Fees are taken from `feeBase`: with no stated bearer the discount is
+  // shared (legacy split on the discounted total); with a stated bearer the
+  // fees stay on the list price and the bearer then absorbs the discount.
+  const feeBase = discountBearer ? listPrice : total;
+  const rawPlatformFee = Math.round((feeBase * platformBps) / 10_000);
 
   let platformFee = rawPlatformFee;
   let agentCommission = 0;
 
   if (agent) {
-    const hasNetRate = typeof agent.netPrice === 'number' && agent.netPrice > 0 && agent.netPrice < total;
+    const hasNetRate =
+      typeof agent.netPrice === 'number' && agent.netPrice > 0 && agent.netPrice < feeBase;
     if (hasNetRate) {
       // Reseller model: the agent keeps everything above its net price.
-      agentCommission = total - (agent.netPrice as number);
+      agentCommission = feeBase - (agent.netPrice as number);
       // Platform still takes its cut, but never more than the provider's net.
       platformFee = Math.min(rawPlatformFee, agent.netPrice as number);
     } else {
-      agentCommission = Math.round((total * agent.commissionBps) / 10_000);
-      platformFee = Math.min(rawPlatformFee, Math.max(0, total - agentCommission));
+      agentCommission = Math.round((feeBase * agent.commissionBps) / 10_000);
+      platformFee = Math.min(rawPlatformFee, Math.max(0, feeBase - agentCommission));
     }
   }
+
+  // Platform-funded discount (admin promo code): the platform pays it out of
+  // its own fee, so the provider's earning is untouched — unless the discount
+  // exceeds the fee, in which case the remainder falls back to the provider.
+  if (discountBearer === 'platform' && discountAmount > 0) {
+    platformFee -= discountAmount;
+  }
+  // Provider-funded discount (promotions): fees were computed on the list
+  // price above, so providerEarning = total - fees already absorbs the whole
+  // discount — the clamping below only guards the edge case where a discount
+  // exceeds the provider's entire slice.
 
   platformFee = Math.max(0, Math.min(platformFee, total - agentCommission));
   agentCommission = Math.max(0, Math.min(agentCommission, total));

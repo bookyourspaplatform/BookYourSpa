@@ -64,6 +64,34 @@ describe('priceBooking', () => {
     expect(q.providerEarning).toBe(405_000 - q.platformFee);
   });
 
+  it('funds a promotion discount from the supplier — fees stay on the list price', () => {
+    const q = priceBooking({
+      listPrice: 450_000,
+      coupon: { code: 'PROMO20', discountType: 'percent', discountValue: 2000 },
+      platformBps: 1500,
+      discountBearer: 'provider',
+    });
+    expect(q.discountAmount).toBe(90_000);
+    expect(q.total).toBe(360_000);
+    expect(q.platformFee).toBe(67_500); // full platform cut on the list price
+    expect(q.providerEarning).toBe(292_500); // 382_500 − the whole 90_000 discount
+    expect(q.platformFee + q.providerEarning).toBe(q.total);
+  });
+
+  it('funds an admin promo code from the platform — the supplier keeps its full earning', () => {
+    const q = priceBooking({
+      listPrice: 450_000,
+      coupon: { code: 'WELCOME10', discountType: 'percent', discountValue: 1000 },
+      platformBps: 1500,
+      discountBearer: 'platform',
+    });
+    expect(q.discountAmount).toBe(45_000);
+    expect(q.total).toBe(405_000);
+    expect(q.platformFee).toBe(67_500 - 45_000); // discount comes out of the platform's fee
+    expect(q.providerEarning).toBe(382_500); // identical to a booking without a discount
+    expect(q.platformFee + q.providerEarning).toBe(q.total);
+  });
+
   it('pays an agent a percent commission on the discounted total', () => {
     const q = priceBooking({
       listPrice: 1_000_000,

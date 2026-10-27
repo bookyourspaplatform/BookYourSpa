@@ -238,7 +238,7 @@ export function PromotionsManager({ promotions }: { promotions: PromoRow[] }) {
         open={open}
         onClose={() => !pending && setOpen(false)}
         title={draft.id ? 'Edit promotion' : 'New promotion'}
-        description="A general promotion — valid automatically at every spa. Deal-position cards show on /deals."
+        description="A platform promotion — valid at a spa once its supplier activates it. Deal-position cards show on /deals."
       >
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Title" required className="sm:col-span-2">
@@ -279,9 +279,10 @@ export function PromotionsManager({ promotions }: { promotions: PromoRow[] }) {
           <div>
             <p className="text-[13px] font-semibold uppercase tracking-wide text-ink-400">Discount code</p>
             <p className="mt-0.5 text-[12.5px] text-ink-500">
-              Every promotion needs a code. Registered customers see it at checkout and activate it only if they
-              want it. It is valid automatically at every spa (a spa can switch itself off in its console), unless
-              you limit it to selected treatments.
+              Every promotion needs a code. Registered customers see it at checkout and apply it only if they want
+              it. It works only at spas whose supplier activated it in their console, and its value is deducted
+              from that supplier&apos;s price — unless you limit it to selected treatments, which the supplier then
+              picks.
             </p>
           </div>
 

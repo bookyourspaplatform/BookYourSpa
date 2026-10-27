@@ -240,7 +240,7 @@ export default async function BranchDetailPage({
 
   const bookHref = `/spas/${slug}/${branch}/book`;
 
-  /* ---------- promo codes redeemable at this spa ---------- */
+  /* ---------- promo codes redeemable at this spa (supplier-owned) ------- */
   const namesById = new Map(treatments.map((t) => [t.id, t.name]));
   const promoCodes: {
     id: string;
@@ -254,6 +254,7 @@ export default async function BranchDetailPage({
     providerId: b.provider.id,
     branchId: b.id,
     now: today,
+    source: 'supplier',
   })) {
     const validNames = p.treatmentIds
       .map((id) => namesById.get(id))

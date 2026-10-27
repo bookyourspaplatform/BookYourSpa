@@ -1090,6 +1090,8 @@ export async function runSeed(opts: { force?: boolean } = {}): Promise<void> {
         opts.couponCode === 'WELCOME10'
           ? { code: 'WELCOME10', discountType: 'percent', discountValue: 1000 }
           : null,
+      // Admin promo codes are funded by the platform, never the supplier.
+      discountBearer: opts.couponCode === 'WELCOME10' ? 'platform' : undefined,
       platformBps: opts.platformBps,
       agent: opts.agentTerms ?? null,
     });

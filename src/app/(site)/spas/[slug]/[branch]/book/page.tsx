@@ -93,8 +93,8 @@ export default async function BookPage({
   });
   const branchProducts = productList.filter((p) => p.active);
 
-  // Active promotions this customer can redeem at this spa: general offers
-  // (unless this provider switched them off) or offers scoped to it — each with
+  // Codes this customer can redeem at this spa: the supplier's own promotions,
+  // admin promotions the spa has activated, and admin promo codes — each with
   // its effective treatment scope, so the wizard shows what the code covers.
   const availablePromotions = (
     await redeemablePromotionsFor(db, { providerId: b.providerId, branchId: b.id, now: new Date() })

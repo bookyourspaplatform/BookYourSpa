@@ -887,8 +887,9 @@ export const promotionsRelations = relations(promotions, ({ one }) => ({
 }));
 
 /**
- * A spa's choice about each platform (general) promotion: valid everywhere by
- * default, and a provider can switch it off — or back on — for itself.
+ * A spa's choice about each platform (general) promotion: valid for that
+ * spa's customers only once the supplier activates it here (opt-in), and
+ * switchable off again at any time.
  */
 export const providerPromotions = pgTable(
   'provider_promotions',
@@ -900,7 +901,7 @@ export const providerPromotions = pgTable(
     promotionId: text('promotion_id')
       .notNull()
       .references(() => promotions.id, { onDelete: 'cascade' }),
-    /** true = this spa offers the promotion, false = opted out. */
+    /** true = this spa offers the promotion, false = explicitly declined. */
     active: boolean('active').notNull().default(true),
     /**
      * This spa's treatment selection when the platform promotion is scoped to

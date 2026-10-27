@@ -19,7 +19,14 @@ import {
   type DiscountType,
 } from '@/db/schema';
 import { getSettings } from '@/lib/settings';
-import { couponApplies, pickPriceOption, branchOptionPrice, priceBooking, type PriceQuote } from '@/lib/pricing';
+import {
+  couponApplies,
+  pickPriceOption,
+  branchOptionPrice,
+  priceBooking,
+  type DiscountBearer,
+  type PriceQuote,
+} from '@/lib/pricing';
 import {
   getAvailability,
   slotsForDate,
@@ -54,6 +61,11 @@ export class BookingError extends Error {
 
 type ResolvedDiscount = {
   code: string;
+  /**
+   * Who funds the discount: a coupon (admin promo code) is owned by the
+   * platform, a promotion's value is deducted from the supplier's price.
+   */
+  bearer: DiscountBearer;
   /** Shape the pricing engine understands. */
   asCoupon: {
     code: string;
@@ -86,9 +98,10 @@ function dailyHourWindow(
 }
 
 /**
- * Resolve a checkout code: first a coupon (scoped codes), then a promotion
- * carrying a discount (general platform promotions unless a spa opted out;
- * optional treatment scope limits which treatments are discounted).
+ * Resolve a checkout code: first a coupon (admin promo code — funded by the
+ * platform), then a promotion carrying a discount (funded by the supplier).
+ * A general platform promotion is only valid at a spa that has activated it
+ * in its console; optional treatment scope limits what it discounts.
  */
 async function resolveDiscountCode(
   db: AppDb,
@@ -125,6 +138,7 @@ async function resolveDiscountCode(
     if (!scopeOk) throw new BookingError('That coupon does not apply here.', 'coupon', 'couponCode');
     return {
       code: coupon.code,
+      bearer: 'platform',
       asCoupon: {
         code: coupon.code,
         discountType: coupon.discountType,
@@ -146,8 +160,8 @@ async function resolveDiscountCode(
   });
   if (!applies.ok) throw new BookingError(applies.reason, 'coupon', 'couponCode');
 
-  // Owner scope: a general promotion applies at every spa unless this one
-  // opted out in its supplier console; provider/branch promos stay local.
+  // Owner scope: a general (admin) promotion is only valid where the supplier
+  // has activated it in its console; provider/branch promos stay local.
   let choice: { active: boolean; treatmentIds: string[] | null } | undefined;
   if (promo.branchId) {
     if (promo.branchId !== opts.branch.id)
@@ -163,7 +177,7 @@ async function resolveDiscountCode(
       ),
       columns: { active: true, treatmentIds: true },
     });
-    if (choice && !choice.active)
+    if (!choice || !choice.active)
       throw new BookingError('That promotion is not available at this spa.', 'coupon', 'couponCode');
   }
 
@@ -198,6 +212,7 @@ async function resolveDiscountCode(
 
   return {
     code: promo.code!,
+    bearer: 'provider',
     asCoupon: {
       code: promo.code!,
       discountType: promo.discountType,
@@ -226,17 +241,32 @@ export type BranchPromoCode = {
 
 /**
  * Redeemable promotions currently offered at a branch: active, carrying a
- * code and a discount, inside their date window, in owner scope for this spa
- * and not switched off by it. Each row carries the *effective* treatment
- * scope — for a platform “selected” promotion that is the list the spa itself
- * picked when activating it; a promotion the spa has not chosen yet is left
- * out because its code would be rejected at checkout.
+ * code and a discount, inside their date window and in owner scope for this
+ * spa. Each row carries the *effective* treatment scope — for a platform
+ * “selected” promotion that is the list the spa itself picked when activating
+ * it.
+ *
+ * `source` splits the two audiences a spa page keeps apart:
+ * - 'all' (default) — everything redeemable here: supplier-owned promotions,
+ *   admin (platform) promotions **this spa has activated**, and admin promo
+ *   codes. Used by the booking wizard.
+ * - 'supplier' — only promotions the supplier itself added (for the spa
+ *   page's “Promo codes” box; admin campaigns live in the offers box).
  */
 export async function redeemablePromotionsFor(
   db: AppDb,
-  opts: { providerId: string; branchId: string; now?: Date },
+  opts: { providerId: string; branchId: string; now?: Date; source?: 'all' | 'supplier' },
 ): Promise<BranchPromoCode[]> {
   const now = opts.now ?? new Date();
+  const source = opts.source ?? 'all';
+  const scope =
+    source === 'supplier'
+      ? or(eq(promotions.providerId, opts.providerId), eq(promotions.branchId, opts.branchId))
+      : or(
+          and(isNull(promotions.providerId), isNull(promotions.branchId)),
+          eq(promotions.providerId, opts.providerId),
+          eq(promotions.branchId, opts.branchId),
+        );
   const rows = await db.query.promotions.findMany({
     where: and(
       eq(promotions.active, true),
@@ -245,11 +275,7 @@ export async function redeemablePromotionsFor(
       isNotNull(promotions.discountValue),
       or(isNull(promotions.endsAt), gte(promotions.endsAt, now)),
       or(isNull(promotions.startsAt), lte(promotions.startsAt, now)),
-      or(
-        and(isNull(promotions.providerId), isNull(promotions.branchId)),
-        eq(promotions.providerId, opts.providerId),
-        eq(promotions.branchId, opts.branchId),
-      ),
+      scope,
     ),
     orderBy: [asc(promotions.sortOrder)],
   });
@@ -264,7 +290,8 @@ export async function redeemablePromotionsFor(
   const out: BranchPromoCode[] = [];
   for (const p of rows) {
     const isPlatform = !p.providerId && !p.branchId;
-    if (isPlatform && choiceBy.get(p.id)?.active === false) continue; // spa opted out
+    // An admin promotion is only offered where the supplier activated it.
+    if (isPlatform && choiceBy.get(p.id)?.active !== true) continue;
 
     let scoped: string[] = [];
     if (p.appliesTo === 'selected') {
@@ -285,6 +312,9 @@ export async function redeemablePromotionsFor(
       validUntilHour: p.validUntilHour,
     });
   }
+  // Admin promo codes belong to the platform — shown everywhere except the
+  // supplier-only listing on the spa page.
+  if (source === 'supplier') return out;
   return couponsFor(db, opts, now, out);
 }
 
@@ -464,6 +494,7 @@ export async function quoteBooking(db: AppDb, input: QuoteInput): Promise<Quote>
   const pricing = priceBooking({
     listPrice,
     coupon: discount?.asCoupon ?? null,
+    discountBearer: discount?.bearer,
     platformBps,
     agent: agentTerms,
   });
@@ -917,6 +948,7 @@ export async function quoteCart(db: AppDb, input: {
   const pricing = priceBooking({
     listPrice,
     coupon: discount?.asCoupon ?? null,
+    discountBearer: discount?.bearer,
     platformBps,
     agent: agentTerms,
   });

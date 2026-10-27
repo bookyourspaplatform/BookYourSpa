@@ -144,8 +144,10 @@ describe('quoteBooking', () => {
     expect(quote.listPrice).toBe(400_000);
     expect(quote.pricing.discountAmount).toBe(40_000);
     expect(quote.pricing.total).toBe(360_000);
-    expect(quote.pricing.platformFee).toBe(54_000);
-    expect(quote.pricing.providerEarning).toBe(306_000);
+    // Admin promo codes are platform-funded: the fee absorbs the discount and
+    // the supplier still earns exactly what it would without the code.
+    expect(quote.pricing.platformFee).toBe(60_000 - 40_000);
+    expect(quote.pricing.providerEarning).toBe(340_000);
     expect(quote.currency).toBe('IDR');
     expect(quote.payment.venue).toBe(true);
   });
@@ -200,7 +202,7 @@ describe('quoteBooking', () => {
       .where(eq(T.coupons.id, ids.coupon));
   });
 
-  it('lists coupon codes alongside promotions for the spa sidebar', async () => {
+  it('lists coupon codes for the booking wizard (never the spa supplier box)', async () => {
     const list = await redeemablePromotionsFor(db, {
       providerId: ids.provider,
       branchId: ids.branch,
@@ -209,6 +211,14 @@ describe('quoteBooking', () => {
     expect(row).toBeDefined();
     expect(row?.discountLabel).toBe('10% off');
     expect(row?.treatmentIds).toEqual([]); // global scope — valid on every treatment
+
+    // The spa page's Promo codes box only ever shows supplier-owned codes.
+    const supplierBox = await redeemablePromotionsFor(db, {
+      providerId: ids.provider,
+      branchId: ids.branch,
+      source: 'supplier',
+    });
+    expect(supplierBox).toEqual([]);
   });
 });
 
@@ -226,8 +236,8 @@ describe('createBooking', () => {
     expect(booking.code).toMatch(/^BYS-[A-Z0-9]{6}$/);
     expect(booking.totalAmount).toBe(360_000);
     expect(booking.listPrice).toBe(400_000);
-    expect(booking.platformFee).toBe(54_000);
-    expect(booking.providerEarning).toBe(306_000);
+    expect(booking.platformFee).toBe(20_000);
+    expect(booking.providerEarning).toBe(340_000);
     expect(booking.paymentStatus).toBe('venue');
     expect(booking.startAt.getTime()).toBe(startAt.getTime());
     expect(quote.pricing.total).toBe(360_000);
@@ -559,8 +569,8 @@ describe('cart booking (multi-treatment + products)', () => {
       expect(quote.listPrice).toBe(700_000);
       expect(quote.pricing.discountAmount).toBe(70_000); // 10% once, not per line
       expect(quote.pricing.total).toBe(630_000);
-      expect(quote.pricing.platformFee).toBe(94_500);
-      expect(quote.pricing.providerEarning).toBe(535_500);
+      expect(quote.pricing.platformFee).toBe(105_000 - 70_000);
+      expect(quote.pricing.providerEarning).toBe(595_000);
       expect(quote.pricing.platformFee + quote.pricing.agentCommission + quote.pricing.providerEarning).toBe(
         quote.pricing.total,
       );
@@ -1012,6 +1022,14 @@ describe('promotion codes', () => {
       active: true,
       maxUses: 0,
     });
+    // The spa activates the platform promotion — without this row the code is
+    // not valid here at all.
+    await db.insert(T.providerPromotions).values({
+      id: 'prp_it_base',
+      providerId: ids.provider,
+      promotionId: PROMO,
+      active: true,
+    });
   });
 
   it('prices a single treatment with a general promotion', async () => {
@@ -1023,6 +1041,12 @@ describe('promotion codes', () => {
     expect(quote.couponCode).toBe('ITPROMO20');
     expect(quote.pricing.discountAmount).toBe(80_000); // 20% of 400k
     expect(quote.pricing.total).toBe(320_000);
+    // Promotion value is deducted from the supplier: the platform keeps its
+    // full cut on the list price and the whole discount comes out of the
+    // provider's earning.
+    expect(quote.pricing.platformFee).toBe(60_000);
+    expect(quote.pricing.providerEarning).toBe(260_000);
+    expect(quote.pricing.platformFee + quote.pricing.providerEarning).toBe(quote.pricing.total);
   });
 
   it('prices a whole cart with the promotion', async () => {
@@ -1047,13 +1071,10 @@ describe('promotion codes', () => {
     ).rejects.toThrow(/not yet available at this spa/);
 
     // The spa activates it for the facial treatment only.
-    await db.insert(T.providerPromotions).values({
-      id: 'prp_it_scope',
-      providerId: ids.provider,
-      promotionId: PROMO,
-      active: true,
-      treatmentIds: [FACIAL],
-    });
+    await db
+      .update(T.providerPromotions)
+      .set({ active: true, treatmentIds: [FACIAL] })
+      .where(eq(T.providerPromotions.id, 'prp_it_base'));
 
     await expect(
       quoteBooking(db, { branchId: ids.branch, treatmentId: ids.treatment, couponCode: 'ITPROMO20' }),
@@ -1066,18 +1087,19 @@ describe('promotion codes', () => {
     });
     expect(ok.pricing.discountAmount).toBe(40_000); // 20% of 200k
 
-    // Reset: all treatments again, choice row removed for later tests.
+    // Reset: all treatments again, selection cleared for later tests.
     await db.update(T.promotions).set({ appliesTo: 'all' }).where(eq(T.promotions.id, PROMO));
-    await db.delete(T.providerPromotions).where(eq(T.providerPromotions.id, 'prp_it_scope'));
+    await db
+      .update(T.providerPromotions)
+      .set({ active: true, treatmentIds: null })
+      .where(eq(T.providerPromotions.id, 'prp_it_base'));
   });
 
   it('respects a spa switching the general promotion off', async () => {
-    await db.insert(T.providerPromotions).values({
-      id: 'prp_it_off',
-      providerId: ids.provider,
-      promotionId: PROMO,
-      active: false,
-    });
+    await db
+      .update(T.providerPromotions)
+      .set({ active: false })
+      .where(eq(T.providerPromotions.id, 'prp_it_base'));
     await expect(
       quoteBooking(db, { branchId: ids.branch, treatmentId: ids.treatment, couponCode: 'ITPROMO20' }),
     ).rejects.toThrow(/not available at this spa/);
@@ -1086,13 +1108,65 @@ describe('promotion codes', () => {
     await db
       .update(T.providerPromotions)
       .set({ active: true })
-      .where(eq(T.providerPromotions.id, 'prp_it_off'));
+      .where(eq(T.providerPromotions.id, 'prp_it_base'));
     const ok = await quoteBooking(db, {
       branchId: ids.branch,
       treatmentId: ids.treatment,
       couponCode: 'ITPROMO20',
     });
     expect(ok.pricing.discountAmount).toBe(80_000);
+  });
+
+  it('never offers an admin promotion the spa has not activated', async () => {
+    await db.delete(T.providerPromotions).where(eq(T.providerPromotions.id, 'prp_it_base'));
+    await expect(
+      quoteBooking(db, { branchId: ids.branch, treatmentId: ids.treatment, couponCode: 'ITPROMO20' }),
+    ).rejects.toThrow(/not available at this spa/);
+    const list = await redeemablePromotionsFor(db, { providerId: ids.provider, branchId: ids.branch });
+    expect(list.some((r) => r.code === 'ITPROMO20')).toBe(false);
+
+    await db.insert(T.providerPromotions).values({
+      id: 'prp_it_base',
+      providerId: ids.provider,
+      promotionId: PROMO,
+      active: true,
+    });
+  });
+
+  it('splits the listings: the wizard sees every valid code, the spa sidebar only supplier ones', async () => {
+    const all = await redeemablePromotionsFor(db, { providerId: ids.provider, branchId: ids.branch });
+    expect(all.some((r) => r.code === 'ITPROMO20')).toBe(true); // activated admin promotion
+    expect(all.some((r) => r.code === 'ITWELCOME10')).toBe(true); // admin promo code (platform-funded)
+
+    const supplierBox = await redeemablePromotionsFor(db, {
+      providerId: ids.provider,
+      branchId: ids.branch,
+      source: 'supplier',
+    });
+    expect(supplierBox.some((r) => r.code === 'ITPROMO20')).toBe(false);
+    expect(supplierBox.some((r) => r.code === 'ITWELCOME10')).toBe(false);
+
+    // The supplier's own codes do appear in its box.
+    await db.insert(T.promotions).values({
+      id: 'prm_it_own_box',
+      title: 'IT Own Box Promo',
+      slug: 'it-own-box-promo',
+      position: 'deal',
+      providerId: ids.provider,
+      branchId: ids.branch,
+      code: 'ITSUP20',
+      discountType: 'percent',
+      discountValue: 2000,
+      active: true,
+      maxUses: 0,
+    });
+    const ownBox = await redeemablePromotionsFor(db, {
+      providerId: ids.provider,
+      branchId: ids.branch,
+      source: 'supplier',
+    });
+    expect(ownBox.some((r) => r.code === 'ITSUP20')).toBe(true);
+    await db.delete(T.promotions).where(eq(T.promotions.id, 'prm_it_own_box'));
   });
 
   it('rejects unknown, expired and over-cap codes', async () => {
