@@ -595,7 +595,7 @@ export async function getBranchDetail(
       .from(reviews)
       .where(and(eq(reviews.branchId, branch.id), eq(reviews.status, 'published')))
       .orderBy(desc(reviews.createdAt))
-      .limit(50),
+      .limit(120),
   ]);
 
   const ratingAgg = ratingRow[0];
