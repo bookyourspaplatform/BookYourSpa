@@ -252,6 +252,8 @@ export function BranchEditor({
   const [importing, startImport] = useTransition();
   const [imageUrl, setImageUrl] = useState('');
   const [imageError, setImageError] = useState('');
+  /** Red banner above the footer — save failures stay on this page. */
+  const [saveError, setSaveError] = useState('');
   const [facilityDraft, setFacilityDraft] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
@@ -334,8 +336,21 @@ export function BranchEditor({
   /* --------------------------------- save ---------------------------------- */
 
   function save() {
+    setSaveError('');
+    // Photos travel as base64 data URLs inside the action body. Too many big
+    // ones push the request past the 4 MB server-action limit (and Vercel's
+    // 4.5 MB cap), which used to crash the whole page to an error screen.
+    const photoChars = draft.images.reduce((n, src) => n + src.length, 0);
+    if (photoChars > 3_900_000) {
+      setSaveError(
+        `Your photos take about ${(photoChars / 1_000_000).toFixed(1)} MB of the 4 MB upload limit — ` +
+          'remove one or two photos (or paste those as image links) and save again.',
+      );
+      return;
+    }
     startTransition(async () => {
-      const res = await saveBranch({
+      try {
+        const res = await saveBranch({
         ...(editingId ? { id: editingId } : {}),
         name: draft.name.trim(),
         addressLine: draft.addressLine.trim(),
@@ -372,12 +387,21 @@ export function BranchEditor({
         paymentMethods: draft.paymentMethods as ('stripe' | 'paypal' | 'razorpay' | 'venue')[],
         status: draft.status as 'active' | 'pending' | 'suspended',
       });
-      if (res.ok) {
-        toast.success(editingId ? 'Spa business updated' : 'Spa business created');
-        onClose();
-        router.refresh();
-      } else {
-        toast.error('Could not save', res.error);
+        if (res.ok) {
+          toast.success(editingId ? 'Spa business updated' : 'Spa business created');
+          onClose();
+          router.refresh();
+        } else {
+          setSaveError(res.error);
+        }
+      } catch (err) {
+        // Never let a failed action crash to the error screen: keep the modal
+        // open with everything the supplier typed, and say what went wrong.
+        setSaveError(
+          err instanceof Error && err.message
+            ? `${err.message} — nothing was lost; this page stayed open, please try again.`
+            : 'Something went wrong while saving — this page stayed open, please try again.',
+        );
       }
     });
   }
@@ -395,7 +419,9 @@ export function BranchEditor({
     try {
       const picked = Array.from(files).slice(0, room);
       const urls: string[] = [];
-      for (const f of picked) urls.push(await fileToDataUrl(f));
+      // Gallery photos render small — compress harder than the default so ten
+      // of them still fit inside the server-action body limit.
+      for (const f of picked) urls.push(await fileToDataUrl(f, 1280, 0.72));
       setDraft((d) => ({ ...d, images: [...d.images, ...urls] }));
       if (files.length > room) setImageError(`Only ${room} more photo${room === 1 ? '' : 's'} fit — limit is ${MAX_BRANCH_IMAGES}.`);
     } catch (err) {
@@ -890,6 +916,15 @@ export function BranchEditor({
       {/* Payments are intentionally not editable here — configured by the platform. */}
 
       {extras && <div className="mt-6">{extras}</div>}
+
+      {saveError && (
+        <div
+          role="alert"
+          className="mt-5 rounded-xl border border-rose-300 bg-rose-50 px-3.5 py-3 text-[13px] font-medium leading-relaxed text-rose-700"
+        >
+          {saveError}
+        </div>
+      )}
 
       <div className="mt-7 flex items-center justify-between gap-3 border-t border-ink-100 pt-4">
         <a

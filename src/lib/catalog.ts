@@ -96,6 +96,7 @@ export const CATEGORY_LABELS: Record<string, string> = {
 
 export const SPA_CATEGORY_LABELS: Record<string, string> = {
   day_spa: 'Day Spa',
+  luxury_spa: 'Luxury Spa',
   hotel_resort_spa: 'Hotel & Resort Spa',
   doorstep_spa: 'Massage on Call / Doorstep Spa',
   wellness_center: 'Wellness Center',
@@ -108,6 +109,7 @@ export const SPA_TYPE_LABELS: Record<string, string> = {
   body_treatment: 'Body Treatment',
   facials_skincare: 'Facials & Skincare',
   beauty_treatment: 'Beauty Treatment',
+  ayurvedic: 'Ayurvedic',
   sauna_thermal: 'Sauna & Thermal',
   hydrotherapy: 'Hydrotherapy',
   hammam_bath: 'Hammam & Bath Ritual',

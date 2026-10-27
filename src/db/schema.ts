@@ -112,6 +112,7 @@ export type PromoAppliesTo = (typeof PROMO_APPLIES_TO)[number];
 
 export const SPA_CATEGORIES = [
   'day_spa',
+  'luxury_spa',
   'hotel_resort_spa',
   'doorstep_spa',
   'wellness_center',
@@ -125,6 +126,7 @@ export const SPA_TYPES = [
   'body_treatment',
   'facials_skincare',
   'beauty_treatment',
+  'ayurvedic',
   'sauna_thermal',
   'hydrotherapy',
   'hammam_bath',
