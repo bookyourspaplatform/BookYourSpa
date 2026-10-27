@@ -1,7 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb, type AppDb } from '@/db';
 import {
@@ -141,6 +141,9 @@ export type GoogleMapsImport = {
     website: string | null;
     address: string | null;
     resolvedUrl: string;
+    /** Google's own rating and review count when GOOGLE_MAPS_API_KEY enrichment ran (e.g. 4.8 / 9062). */
+    rating: number | null;
+    ratingCount: number | null;
     /** 'places' = enriched via GOOGLE_MAPS_API_KEY, 'url' = parsed from the link only. */
     source: 'places' | 'url';
   };
@@ -277,6 +280,8 @@ export async function importGoogleMaps(rawUrl: string): Promise<GoogleMapsImport
       website: null as string | null,
       address: null as string | null,
       resolvedUrl: resolved,
+      rating: null as number | null,
+      ratingCount: null as number | null,
       source: 'url' as 'places' | 'url',
     };
 
@@ -308,7 +313,7 @@ export async function importGoogleMaps(rawUrl: string): Promise<GoogleMapsImport
           const details = await fetch(`https://places.googleapis.com/v1/places/${placeId}`, {
             headers: {
               'X-Goog-Api-Key': key,
-              'X-Goog-FieldMask': 'displayName,formattedAddress,nationalPhoneNumber,websiteUri',
+              'X-Goog-FieldMask': 'displayName,formattedAddress,nationalPhoneNumber,websiteUri,rating,userRatingCount',
             },
             signal: AbortSignal.timeout(8000),
           }).catch(() => null);
@@ -318,11 +323,15 @@ export async function importGoogleMaps(rawUrl: string): Promise<GoogleMapsImport
               formattedAddress?: string;
               nationalPhoneNumber?: string;
               websiteUri?: string;
+              rating?: number;
+              userRatingCount?: number;
             };
             data.name = json.displayName?.text ?? data.name;
             data.address = json.formattedAddress ?? null;
             data.phone = json.nationalPhoneNumber ?? null;
             data.website = json.websiteUri ?? null;
+            if (typeof json.rating === 'number') data.rating = Math.round(json.rating * 10) / 10;
+            if (typeof json.userRatingCount === 'number') data.ratingCount = json.userRatingCount;
             data.source = 'places';
           }
         }
@@ -334,6 +343,32 @@ export async function importGoogleMaps(rawUrl: string): Promise<GoogleMapsImport
     return { ok: true, data };
   } catch {
     return { ok: false, error: 'Could not reach Google Maps to import that link.' };
+  }
+}
+
+/**
+ * Published review aggregate for a branch — feeds the Google-style badge on
+ * the spa form (stars · average · count). Any signed-in role may read it:
+ * the same numbers render on the public branch page.
+ */
+export async function getBranchReviewStats(
+  branchId: string,
+): Promise<ActionResult<{ avg: number; count: number }>> {
+  try {
+    await requireUser();
+    if (!branchId) return fail('Location not found.');
+    const db = await getDb();
+    const branch = await db.query.branches.findFirst({ where: eq(branches.id, branchId) });
+    if (!branch) return fail('Location not found.');
+    const rows = await db
+      .select({ avg: sql<string>`avg(${reviews.rating})`, n: sql<number>`count(*)::int` })
+      .from(reviews)
+      .where(and(eq(reviews.branchId, branchId), eq(reviews.status, 'published')));
+    const n = rows[0]?.n ?? 0;
+    if (!n) return { ok: true, data: { avg: 0, count: 0 } };
+    return { ok: true, data: { avg: Math.round(Number(rows[0]!.avg) * 10) / 10, count: n } };
+  } catch {
+    return fail('Could not load review stats.');
   }
 }
 

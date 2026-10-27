@@ -15,6 +15,7 @@ import {
   promotions,
   providerClaims,
   providers,
+  reviews,
   settings,
   therapists,
   treatments,
@@ -29,6 +30,7 @@ import { treatmentPayload, treatmentSchema } from '@/lib/treatment';
 import { findUserByEmail, requireUser } from '@/lib/auth/session';
 import { cancelBooking, BookingError } from '@/lib/booking';
 import { logAudit } from '@/lib/audit';
+import { generateGoogleReviews } from '@/db/seed';
 import { newId, slugify } from '@/lib/utils';
 import { DEFAULT_SETTINGS, type SettingKey } from '@/lib/settings';
 
@@ -345,6 +347,55 @@ export async function adminGetSpa(
     };
   } catch {
     return fail('Could not load the spa business.');
+  }
+}
+
+/**
+ * Admin DB → Providers → spa form: generate Google-imported reviews for a
+ * branch, so seeding a newly added listing never needs a manual request.
+ * `count` sets how many reviews, `star` the average they add up to (4.8 with
+ * 30 reviews → 24×5★ + 6×4★). `replace` swaps out the previously imported
+ * set; platform/booking reviews are never touched.
+ */
+export async function adminGenerateReviews(input: {
+  branchId: string;
+  count: number;
+  star: number;
+  replace: boolean;
+}): Promise<ActionResult<{ generated: number; avg: number; count: number }>> {
+  try {
+    const { user, db } = await adminCtx();
+    const branchId = String(input?.branchId ?? '');
+    const count = Math.round(Number(input?.count));
+    const star = Number(input?.star);
+    if (!branchId) return fail('Save the location first, then generate its reviews.');
+    if (!Number.isFinite(count) || count < 1 || count > 200) {
+      return fail('Number of reviews must be between 1 and 200.');
+    }
+    if (!Number.isFinite(star) || star < 1 || star > 5) {
+      return fail('Average star must be between 1 and 5.');
+    }
+    const branch = await db.query.branches.findFirst({ where: eq(branches.id, branchId) });
+    if (!branch) return fail('Location not found.');
+
+    if (input.replace) {
+      await db.delete(reviews).where(and(eq(reviews.branchId, branchId), eq(reviews.source, 'google')));
+    }
+    const rows = generateGoogleReviews(branchId, { count, star });
+    await db.insert(reviews).values(rows);
+    const avg = Math.round((rows.reduce((n, r) => n + Number(r.rating), 0) / rows.length) * 10) / 10;
+    await logAudit({
+      actorId: user.id,
+      actorRole: user.role,
+      action: 'admin.generate_reviews',
+      entity: 'branch',
+      entityId: branchId,
+      meta: { count: rows.length, star, replace: !!input.replace },
+    });
+    revalidatePath('/spas');
+    return { ok: true, data: { generated: rows.length, avg, count } };
+  } catch {
+    return fail('Could not generate reviews.');
   }
 }
 

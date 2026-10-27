@@ -85,6 +85,7 @@ export function AddSpaButton() {
   return (
     <BranchEditor
       branch={null}
+      admin
       onClose={() => setOpen(false)}
       saveBranch={(input) => adminSaveSpa({ ...input, ownerEmail, publish })}
       extras={

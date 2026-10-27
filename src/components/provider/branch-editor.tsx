@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState, useTransition } from 'react';
+import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Check,
@@ -11,21 +11,24 @@ import {
   Loader2,
   MapPin,
   Plus,
+  Star,
   Trash2,
   Upload,
 } from 'lucide-react';
 import {
+  getBranchReviewStats,
   importGoogleMaps,
   saveBranch as saveBranchAction,
   type ActionResult,
 } from '@/lib/actions/provider';
+import { adminGenerateReviews } from '@/lib/actions/admin';
 import type { BranchSaveInput } from '@/lib/branch';
 import { SPA_CATEGORIES, SPA_FACILITIES, SPA_TYPES } from '@/db/schema';
 import { SPA_CATEGORY_LABELS, SPA_FACILITY_LABELS, SPA_TYPE_LABELS } from '@/lib/catalog';
 import { MAX_BRANCH_IMAGES, fileToDataUrl, isRenderableImage } from '@/lib/image';
 import { Modal } from '@/components/ui/modal';
 import { Button } from '@/components/ui/button';
-import { Field, Input, inputCls } from '@/components/ui/field';
+import { Checkbox, Field, Input, inputCls } from '@/components/ui/field';
 import { RichText } from '@/components/ui/rich-text';
 import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
@@ -245,24 +248,45 @@ function ChipToggle({
 /** Matches the server-side cap so the form can warn before a failed save. */
 const MAX_BRANCH_FACILITIES = 30;
 
+/** Small Google-style star row for the review badge (★★★★★ 4.8). */
+function ReviewStars({ value }: { value: number }) {
+  const filled = Math.round(value);
+  return (
+    <span className="inline-flex items-center gap-0.5" role="img" aria-label={`${value} out of 5 stars`}>
+      {[0, 1, 2, 3, 4].map((i) => (
+        <Star
+          key={i}
+          className={
+            i < filled ? 'size-4 fill-amber-400 text-amber-400' : 'size-4 fill-ink-200 text-ink-200'
+          }
+        />
+      ))}
+    </span>
+  );
+}
+
 /**
  * Create/edit dialog for a single spa business (branch). Pass `branch` to edit,
  * or `null` to create. Owns its own save flow and closes itself.
  *
  * `saveBranch` swaps the server action (the admin panel passes its own action
  * with the same payload shape) and `extras` renders additional admin-only
- * fields above the footer.
+ * fields above the footer. `admin` adds the admin-only Google-review
+ * generator next to the review badge.
  */
 export function BranchEditor({
   branch,
   onClose,
   saveBranch = saveBranchAction,
   extras,
+  admin = false,
 }: {
   branch: BranchRow | null;
   onClose: () => void;
   saveBranch?: (input: BranchSaveInput) => Promise<ActionResult<{ id: string }>>;
   extras?: React.ReactNode;
+  /** Admin form only — reveals the "Generate reviews" panel. */
+  admin?: boolean;
 }) {
   const editingId = branch?.id ?? null;
   const [draft, setDraft] = useState<Draft>(() => toDraft(branch));
@@ -279,6 +303,60 @@ export function BranchEditor({
   const fileRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
   const toast = useToast();
+
+  /* --------------------------- Google reviews ----------------------------- */
+  /** Published-review aggregate behind the Google-style badge. */
+  const [reviewStats, setReviewStats] = useState<{ avg: number; count: number } | null>(null);
+  /** Google's own rating/count when the import was Places-enriched (GOOGLE_MAPS_API_KEY). */
+  const [googleRating, setGoogleRating] = useState<{ avg: number; count: number } | null>(null);
+  const [genCount, setGenCount] = useState('30');
+  const [genStar, setGenStar] = useState('4.8');
+  const [genReplace, setGenReplace] = useState(true);
+  const [generating, startGenerate] = useTransition();
+
+  const refreshReviewStats = useCallback(async () => {
+    if (!editingId) return;
+    const res = await getBranchReviewStats(editingId);
+    if (res.ok && res.data) setReviewStats(res.data);
+  }, [editingId]);
+
+  useEffect(() => {
+    void refreshReviewStats();
+  }, [refreshReviewStats]);
+
+  /** What the badge shows: Google's own rating when we have it, else ours. */
+  const badge = googleRating ?? (reviewStats && reviewStats.count > 0 ? reviewStats : null);
+
+  function generateReviews() {
+    if (!editingId) {
+      toast.error('Save the location first', 'Reviews are generated once this location exists.');
+      return;
+    }
+    const count = Number(genCount);
+    const star = Number(genStar);
+    if (!genCount.trim() || !Number.isFinite(count) || count < 1 || count > 200) {
+      toast.error('Check the number of reviews', 'Enter a whole number between 1 and 200.');
+      return;
+    }
+    if (!genStar.trim() || !Number.isFinite(star) || star < 1 || star > 5) {
+      toast.error('Check the average star', 'Enter a value between 1 and 5, for example 4.8.');
+      return;
+    }
+    startGenerate(async () => {
+      const res = await adminGenerateReviews({ branchId: editingId, count, star, replace: genReplace });
+      if (!res.ok) {
+        toast.error('Could not generate reviews', res.error);
+        return;
+      }
+      const data = res.data!;
+      setGoogleRating(null);
+      await refreshReviewStats();
+      toast.success(
+        `Generated ${data.generated} reviews`,
+        `Average star ${data.avg} — they show on the page 10 at a time.`,
+      );
+    });
+  }
 
   function set<K extends keyof Draft>(key: K, value: Draft[K]) {
     setDraft((d) => ({ ...d, [key]: value }));
@@ -347,6 +425,11 @@ export function BranchEditor({
         d.website && !branch?.website ? 'website' : null,
         d.address && !branch?.addressLine ? 'address' : null,
       ].filter(Boolean);
+      if (d.rating !== null && d.ratingCount !== null) {
+        setGoogleRating({ avg: d.rating, count: d.ratingCount });
+      } else {
+        void refreshReviewStats();
+      }
       toast.success(
         d.source === 'places' ? 'Imported from Google Maps' : 'Location imported from Google Maps',
         filled.length ? `Filled: ${filled.join(', ')}. Review the details below.` : 'Coordinates set — fill the details below.',
@@ -535,6 +618,93 @@ export function BranchEditor({
             Import from Google Maps
           </button>
         </div>
+
+        {/* Google-style badge: ★★★★★ 4.8 (9,062) — Google's rating when the
+            import was Places-enriched, otherwise this page's published
+            review average (same numbers guests see). */}
+        <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-ink-100 bg-sand-50 px-3.5 py-2.5">
+          {badge ? (
+            <>
+              <ReviewStars value={badge.avg} />
+              <span className="text-[15px] font-semibold text-ink-800">{badge.avg.toFixed(1)}</span>
+              <span className="text-[13.5px] text-ink-500">({badge.count.toLocaleString('en-US')})</span>
+              <span className="text-[12.5px] text-ink-400">
+                · {googleRating ? 'Google rating from the listing' : 'published reviews on this page'}
+              </span>
+            </>
+          ) : (
+            <span className="text-[13px] text-ink-500">
+              No reviews yet
+              {admin
+                ? editingId
+                  ? ' — generate some with the panel below.'
+                  : ' — save this location first, then generate its reviews.'
+                : '.'}
+            </span>
+          )}
+        </div>
+
+        {admin && (
+          <div className="mt-3 rounded-xl border border-ink-100 p-3.5">
+            <p className="text-[13px] font-semibold uppercase tracking-wide text-ink-400">
+              Google reviews · admin
+            </p>
+            <p className="mt-0.5 text-[12.5px] text-ink-500">
+              Generate the imported reviews shown on this location's page. The average star is the
+              average they add up to — 4.8 with 30 reviews lands on 24×5★ + 6×4★.
+            </p>
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <Field label="Number of reviews" hint="Between 1 and 200.">
+                {({ id }) => (
+                  <Input
+                    id={id}
+                    type="number"
+                    min={1}
+                    max={200}
+                    inputMode="numeric"
+                    value={genCount}
+                    onChange={(e) => setGenCount(e.target.value)}
+                  />
+                )}
+              </Field>
+              <Field label="Average star" hint="Between 1 and 5, e.g. 4.8.">
+                {({ id }) => (
+                  <Input
+                    id={id}
+                    type="number"
+                    min={1}
+                    max={5}
+                    step="0.1"
+                    inputMode="decimal"
+                    value={genStar}
+                    onChange={(e) => setGenStar(e.target.value)}
+                  />
+                )}
+              </Field>
+            </div>
+            <div className="mt-1 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <Checkbox
+                checked={genReplace}
+                onChange={(e) => setGenReplace(e.target.checked)}
+                label="Replace the imported reviews already on this location"
+              />
+              <button
+                type="button"
+                disabled={generating || !editingId}
+                onClick={generateReviews}
+                className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl bg-ink-800 px-4 text-sm font-medium text-white hover:bg-ink-900 disabled:opacity-60"
+              >
+                {generating ? <Loader2 className="size-4 animate-spin" /> : <Star className="size-4" />}
+                Generate reviews
+              </button>
+            </div>
+            {!editingId && (
+              <p className="mt-2 text-[12.5px] text-ink-500">
+                Save this location first — then come back to generate its reviews.
+              </p>
+            )}
+          </div>
+        )}
 
         <div className="mt-3 grid grid-cols-2 gap-3">
           <Field label="Latitude">

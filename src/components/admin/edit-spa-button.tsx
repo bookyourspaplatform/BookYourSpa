@@ -81,6 +81,7 @@ export function EditSpaButton({
       <BranchEditor
         key={chosen?.id ?? 'new'}
         branch={chosen}
+        admin
         onClose={close}
         saveBranch={(input) => adminSaveSpa({ ...input, providerId, ownerEmail, publish })}
         extras={

@@ -122,6 +122,50 @@ export function googleReviewRows(branchId: string, offset: number): (typeof T.re
   return rows;
 }
 
+/**
+ * Generate any number of Google-imported reviews whose average lands on the
+ * requested star: ratings split between ceil(star) and the star below and are
+ * spaced evenly across the list — e.g. 30 reviews at 4.8 → 24×5★ + 6×4★.
+ * Used by the admin "Generate reviews" button on the spa form.
+ */
+export function generateGoogleReviews(
+  branchId: string,
+  opts: { count: number; star: number; offset?: number },
+): (typeof T.reviews.$inferInsert)[] {
+  const count = Math.max(1, Math.min(200, Math.round(opts.count)));
+  const star = Math.min(5, Math.max(1, opts.star));
+  const offset = opts.offset ?? 0;
+  const hi = Math.ceil(star);
+  const lo = Math.max(1, hi - 1);
+  const nLo = Math.round(count * (hi - star));
+
+  const rows: (typeof T.reviews.$inferInsert)[] = [];
+  let shortIdx = 0;
+  let longIdx = 0;
+  for (let i = 0; i < count; i++) {
+    // Lower ratings spread evenly through the list rather than clumped by date.
+    const isLo = Math.floor(((i + 1) * nLo) / count) > Math.floor((i * nLo) / count);
+    const isLong = (i + offset) % 5 === 4; // ~1 in 5 needs "show more"
+    const comment = isLong
+      ? GOOGLE_LONG_LINES[(longIdx++ + offset) % GOOGLE_LONG_LINES.length]!
+      : GOOGLE_LINES[(shortIdx++ + offset * 7) % GOOGLE_LINES.length]!;
+    rows.push({
+      id: newId('rev'),
+      branchId,
+      guestName: GOOGLE_NAMES[(i + offset * 11) % GOOGLE_NAMES.length]!,
+      rating: isLo ? lo : hi,
+      comment,
+      status: 'published',
+      source: 'google',
+      // Newest first, spread across roughly the last 18 months.
+      createdAt: new Date(
+        Date.now() - (5 + Math.round((i * 540) / count) + offset * 11) * 86_400_000,
+      ),
+    });
+  }
+  return rows;
+}
+
 export async function runSeed(opts: { force?: boolean } = {}): Promise<void> {
   const db = await getDb();
 
