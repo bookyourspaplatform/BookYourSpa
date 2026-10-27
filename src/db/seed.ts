@@ -270,11 +270,11 @@ export async function runSeed(opts: { force?: boolean } = {}): Promise<void> {
     {
       id: serenityId,
       ownerId: serenityOwnerId,
-      name: 'Serenity Dubai Spa',
-      slug: slugify('Serenity Dubai Spa'),
+      name: 'Home Care Spa',
+      slug: slugify('Home Care Spa'),
       tagline: 'Hammam rituals and desert botanicals in Dubai Marina',
       description:
-        'Serenity Dubai Spa brings authentic Moroccan hammam ceremonies, desert clay wraps and signature facials to Dubai Marina. Open daily until 22:00 with a mixed-gender therapist team.',
+        'Home Care Spa brings authentic Moroccan hammam ceremonies, desert clay wraps and signature facials to Dubai Marina. Open daily until 22:00 with a mixed-gender therapist team.',
       country: 'AE',
       baseCurrency: 'AED',
       status: 'approved',
@@ -976,7 +976,7 @@ export async function runSeed(opts: { force?: boolean } = {}): Promise<void> {
       title: 'New in Dubai: Moroccan Hammam Rituals',
       slug: 'dubai-hammam-rituals',
       summary: 'Marble hammam ceremonies now open at Dubai Marina, daily until 22:00.',
-      linkUrl: '/spas/serenity-dubai-spa',
+      linkUrl: '/spas/home-care-spa',
       position: 'banner',
       code: 'HAMMAM',
       active: true,

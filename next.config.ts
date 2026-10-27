@@ -33,6 +33,18 @@ const nextConfig: NextConfig = {
     };
     const rules = [
       {
+        // The Dubai home-care spa was renamed from "Serenity Dubai Spa" —
+        // keep old booking emails / search results pointing at the new slug.
+        source: '/spas/serenity-dubai-spa/:branch*',
+        destination: '/spas/home-care-spa/:branch*',
+        permanent: true,
+      },
+      {
+        source: '/spas/serenity-dubai-spa',
+        destination: '/spas/home-care-spa',
+        permanent: true,
+      },
+      {
         source: '/spas/aranjaya-spa-wellness/:branch*',
         destination: '/spas/orchid-spa/:branch*',
         permanent: true,

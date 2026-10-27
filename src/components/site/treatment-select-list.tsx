@@ -49,7 +49,7 @@ export function TreatmentSelectList({
 }: {
   treatments: SelectableTreatment[];
   currency: string;
-  /** Booking URL for this branch, e.g. `/spas/serenity-dubai-spa/dubai-spa-at-your-home/book`. */
+  /*   * Booking URL for this branch, e.g. `/spas/home-care-spa/dubai-spa-at-your-home/book`. */
   bookHref: string;
   /** Card to ring out (from the legacy `?treatment=` deep link). */
   highlightedId?: string | null;
