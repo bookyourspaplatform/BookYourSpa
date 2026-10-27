@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { and, asc, desc, eq, gte, inArray, isNull, lte, or } from 'drizzle-orm';
 import { Megaphone, Sparkles } from 'lucide-react';
 import { getDb } from '@/db';
-import { branches, promotions, providerPromotions } from '@/db/schema';
+import { branchTreatments, branches, promotions, providerPromotions, treatments } from '@/db/schema';
 import { getCurrentUser } from '@/lib/auth/session';
 import { pageMetadata } from '@/lib/seo';
 import {
@@ -28,12 +28,14 @@ export default async function ProviderPromotionsPage() {
   const db = await getDb();
   const now = new Date();
 
-  const [branchRows, generalRows, choiceRows] = await Promise.all([
-    db.query.branches.findMany({
-      where: eq(branches.providerId, providerId),
-      orderBy: [asc(branches.name)],
-      columns: { id: true, name: true },
-    }),
+  const branchRows = await db.query.branches.findMany({
+    where: eq(branches.providerId, providerId),
+    orderBy: [asc(branches.name)],
+    columns: { id: true, name: true },
+  });
+  const branchIds = branchRows.map((b) => b.id);
+
+  const [generalRows, choiceRows, treatmentRows, linkRows] = await Promise.all([
     db.query.promotions.findMany({
       where: and(
         isNull(promotions.providerId),
@@ -47,8 +49,20 @@ export default async function ProviderPromotionsPage() {
     db.query.providerPromotions.findMany({
       where: eq(providerPromotions.providerId, providerId),
     }),
+    db.query.treatments.findMany({
+      where: eq(treatments.providerId, providerId),
+      orderBy: [asc(treatments.name)],
+      columns: { id: true, name: true },
+    }),
+    branchIds.length
+      ? db.query.branchTreatments.findMany({
+          where: inArray(branchTreatments.branchId, branchIds),
+          columns: { branchId: true, treatmentId: true },
+        })
+      : Promise.resolve([]),
   ]);
 
+  const choiceBy = new Map(choiceRows.map((c) => [c.promotionId, c]));
   const enabledBy = new Map(choiceRows.map((c) => [c.promotionId, c.active]));
   const platformRows: PlatformPromoRow[] = generalRows.map((p) => ({
     id: p.id,
@@ -59,11 +73,16 @@ export default async function ProviderPromotionsPage() {
     code: p.code,
     discountType: p.discountType,
     discountValue: p.discountValue,
+    appliesTo: p.appliesTo,
     treatmentIds: p.treatmentIds,
+    validFromHour: p.validFromHour,
+    validUntilHour: p.validUntilHour,
+    // This spa's own choice — for a “selected” promotion it also carries the
+    // treatments this spa picked when activating the offer.
+    selectedTreatmentIds: choiceBy.get(p.id)?.treatmentIds ?? null,
     enabled: enabledBy.get(p.id) ?? true,
   }));
 
-  const branchIds = branchRows.map((b) => b.id);
   const ownRows = await db.query.promotions.findMany({
     where: branchIds.length
       ? or(eq(promotions.providerId, providerId), inArray(promotions.branchId, branchIds))
@@ -83,6 +102,19 @@ export default async function ProviderPromotionsPage() {
       startsAt: p.startsAt?.toISOString() ?? null,
       endsAt: p.endsAt?.toISOString() ?? null,
       active: p.active,
+      linkUrl: p.linkUrl,
+      sortOrder: p.sortOrder,
+      code: p.code,
+      discountType: p.discountType,
+      discountValue: p.discountValue,
+      currency: p.currency,
+      minAmount: p.minAmount,
+      maxUses: p.maxUses ?? 0,
+      usedCount: p.usedCount,
+      appliesTo: p.appliesTo,
+      treatmentIds: p.treatmentIds,
+      validFromHour: p.validFromHour,
+      validUntilHour: p.validUntilHour,
     });
     ownByBranch.set(p.branchId, list);
   }
@@ -106,7 +138,10 @@ export default async function ProviderPromotionsPage() {
             spa only; switch it back on whenever you like.
           </p>
         </div>
-        <PlatformPromotions rows={platformRows} />
+        <PlatformPromotions
+          rows={platformRows}
+          treatments={treatmentRows}
+        />
       </section>
 
       <section className="space-y-4">
@@ -130,7 +165,13 @@ export default async function ProviderPromotionsPage() {
           branchRows.map((b) => (
             <div key={b.id} className="rounded-3xl border border-ink-100 bg-white p-4 sm:p-5">
               <p className="mb-3 text-[13px] font-semibold uppercase tracking-wide text-ink-400">{b.name}</p>
-              <PromotionPanel branchId={b.id} rows={ownByBranch.get(b.id) ?? []} />
+              <PromotionPanel
+                branchId={b.id}
+                rows={ownByBranch.get(b.id) ?? []}
+                treatmentOptions={treatmentRows.filter((t) =>
+                  linkRows.some((l) => l.branchId === b.id && l.treatmentId === t.id),
+                )}
+              />
             </div>
           ))
         )}

@@ -14,6 +14,7 @@ import {
   DELIVERY_TYPE_LABELS,
 } from '@/lib/catalog';
 import { branchOptionPrice } from '@/lib/pricing';
+import { redeemablePromotionsFor } from '@/lib/booking';
 import { getCurrentUser } from '@/lib/auth/session';
 import { findClaimForUser } from '@/lib/claims';
 import { getSettings } from '@/lib/settings';
@@ -23,7 +24,7 @@ import { JsonLd } from '@/components/json-ld';
 import { Badge } from '@/components/ui/badge';
 import { GREEN_BTN } from '@/components/ui/classes';
 import { formatMoney } from '@/lib/money';
-import { dateKeyInTz, formatDate } from '@/lib/utils';
+import { dateKeyInTz, formatDate, hourWindowLabel } from '@/lib/utils';
 import { SpaCard, priceLevel } from '@/components/site/spa-card';
 import { TreatmentSelectList } from '@/components/site/treatment-select-list';
 import { SpaGallery } from '@/components/site/spa-gallery';
@@ -238,6 +239,41 @@ export default async function BranchDetailPage({
     .slice(0, 3);
 
   const bookHref = `/spas/${slug}/${branch}/book`;
+
+  /* ---------- promo codes redeemable at this spa ---------- */
+  const namesById = new Map(treatments.map((t) => [t.id, t.name]));
+  const promoCodes: {
+    id: string;
+    title: string;
+    code: string;
+    discountLabel: string;
+    validOn: string;
+    hours: string;
+  }[] = [];
+  for (const p of await redeemablePromotionsFor(db, {
+    providerId: b.provider.id,
+    branchId: b.id,
+    now: today,
+  })) {
+    const validNames = p.treatmentIds
+      .map((id) => namesById.get(id))
+      .filter((n): n is string => Boolean(n));
+    // A scoped code is only worth showing when some of its treatments are here.
+    if (p.treatmentIds.length > 0 && validNames.length === 0) continue;
+    const shown = validNames.slice(0, 3).join(', ');
+    promoCodes.push({
+      id: p.id,
+      title: p.title,
+      code: p.code,
+      discountLabel: p.discountLabel,
+      validOn: validNames.length
+        ? validNames.length > 3
+          ? `${shown} +${validNames.length - 3} more`
+          : shown
+        : 'all treatments',
+      hours: hourWindowLabel(p.validFromHour, p.validUntilHour),
+    });
+  }
 
   return (
     <>
@@ -610,6 +646,33 @@ export default async function BranchDetailPage({
                 <Link href={bookHref} className={`${GREEN_BTN} mt-4 h-11 w-full text-sm`}>
                   Check availability
                 </Link>
+              </div>
+            )}
+
+            {/* Promo codes — which treatments each code is valid for */}
+            {promoCodes.length > 0 && (
+              <div className="rounded-3xl border border-ink-100 bg-white p-5">
+                <h3 className="text-[15px] font-semibold text-ink-900">Promo codes</h3>
+                <ul className="mt-3 space-y-3">
+                  {promoCodes.map((p) => (
+                    <li key={p.id} className="rounded-2xl border border-brand-100 bg-brand-50/50 px-3.5 py-3">
+                      <p className="flex flex-wrap items-center gap-2 text-[14px] font-medium text-ink-800">
+                        <span className="min-w-0">{p.title}</span>
+                        <span className="rounded-full bg-brand-700 px-2 py-0.5 text-[12px] font-semibold text-white">
+                          {p.discountLabel}
+                        </span>
+                        <span className="font-mono text-[12.5px] text-ink-500">{p.code}</span>
+                      </p>
+                      <p className="mt-1 text-[12.5px] text-ink-500">
+                        Valid on {p.validOn}
+                        {p.hours ? ` · daily ${p.hours}` : ''}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-3 text-[12px] text-ink-400">
+                  Registered customers apply the code at checkout — sign in to use it.
+                </p>
               </div>
             )}
 

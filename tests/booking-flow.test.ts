@@ -3,9 +3,9 @@ import { eq } from 'drizzle-orm';
 import { getDb, type AppDb } from '@/db';
 import * as T from '@/db/schema';
 import { hashPassword } from '@/lib/auth/password';
-import { quoteBooking, quoteCart, createBooking, createBookingGroup, cancelBooking, releaseExpiredHolds, BookingError } from '@/lib/booking';
+import { quoteBooking, quoteCart, createBooking, createBookingGroup, cancelBooking, releaseExpiredHolds, redeemablePromotionsFor, BookingError } from '@/lib/booking';
 import { getAvailability, getTogetherAvailability, zonedToUtc } from '@/lib/availability';
-import { dateKeyInTz } from '@/lib/utils';
+import { dateKeyInTz, partsInTz } from '@/lib/utils';
 
 const TZ = 'Asia/Makassar';
 
@@ -167,6 +167,48 @@ describe('quoteBooking', () => {
     await expect(
       quoteBooking(db, { branchId: ids.branch, treatmentId: ids.treatment, couponCode: 'NOPE' }),
     ).rejects.toThrow(BookingError);
+  });
+
+  it('enforces the coupon daily hour window in spa local time', async () => {
+    const raw = partsInTz(new Date(), TZ).hour;
+    const h = raw === 24 ? 0 : raw;
+    const far = (h + 6) % 24; // six hours away — never “now”
+
+    await db
+      .update(T.coupons)
+      .set({ validFromHour: far, validUntilHour: far })
+      .where(eq(T.coupons.id, ids.coupon));
+    await expect(
+      quoteBooking(db, { branchId: ids.branch, treatmentId: ids.treatment, couponCode: 'ITWELCOME10' }),
+    ).rejects.toThrow(/only valid between/);
+
+    // A window covering now (and its neighbours) accepts the code again.
+    await db
+      .update(T.coupons)
+      .set({ validFromHour: (h + 23) % 24, validUntilHour: (h + 1) % 24 })
+      .where(eq(T.coupons.id, ids.coupon));
+    const ok = await quoteBooking(db, {
+      branchId: ids.branch,
+      treatmentId: ids.treatment,
+      couponCode: 'ITWELCOME10',
+    });
+    expect(ok.couponCode).toBe('ITWELCOME10');
+
+    await db
+      .update(T.coupons)
+      .set({ validFromHour: null, validUntilHour: null })
+      .where(eq(T.coupons.id, ids.coupon));
+  });
+
+  it('lists coupon codes alongside promotions for the spa sidebar', async () => {
+    const list = await redeemablePromotionsFor(db, {
+      providerId: ids.provider,
+      branchId: ids.branch,
+    });
+    const row = list.find((r) => r.code === 'ITWELCOME10');
+    expect(row).toBeDefined();
+    expect(row?.discountLabel).toBe('10% off');
+    expect(row?.treatmentIds).toEqual([]); // global scope — valid on every treatment
   });
 });
 
@@ -994,11 +1036,24 @@ describe('promotion codes', () => {
     expect(quote.couponCode).toBe('ITPROMO20');
   });
 
-  it('honours the all-treatments / selected-treatments scope', async () => {
-    await db
-      .update(T.promotions)
-      .set({ treatmentIds: [FACIAL] })
-      .where(eq(T.promotions.id, PROMO));
+  it('honours the all-treatments / selected-treatments scope the spa picks', async () => {
+    // Admin marks the promotion “Selected treatments” without choosing any —
+    // the treatments come from the spa when it activates the offer.
+    await db.update(T.promotions).set({ appliesTo: 'selected' }).where(eq(T.promotions.id, PROMO));
+
+    // No selection at this spa yet → the code is not redeemable here.
+    await expect(
+      quoteBooking(db, { branchId: ids.branch, treatmentId: FACIAL, couponCode: 'ITPROMO20' }),
+    ).rejects.toThrow(/not yet available at this spa/);
+
+    // The spa activates it for the facial treatment only.
+    await db.insert(T.providerPromotions).values({
+      id: 'prp_it_scope',
+      providerId: ids.provider,
+      promotionId: PROMO,
+      active: true,
+      treatmentIds: [FACIAL],
+    });
 
     await expect(
       quoteBooking(db, { branchId: ids.branch, treatmentId: ids.treatment, couponCode: 'ITPROMO20' }),
@@ -1011,7 +1066,9 @@ describe('promotion codes', () => {
     });
     expect(ok.pricing.discountAmount).toBe(40_000); // 20% of 200k
 
-    await db.update(T.promotions).set({ treatmentIds: null }).where(eq(T.promotions.id, PROMO));
+    // Reset: all treatments again, choice row removed for later tests.
+    await db.update(T.promotions).set({ appliesTo: 'all' }).where(eq(T.promotions.id, PROMO));
+    await db.delete(T.providerPromotions).where(eq(T.providerPromotions.id, 'prp_it_scope'));
   });
 
   it('respects a spa switching the general promotion off', async () => {
@@ -1081,5 +1138,70 @@ describe('promotion codes', () => {
       columns: { usedCount: true },
     });
     expect((after?.usedCount ?? 0) - (before?.usedCount ?? 0)).toBe(1);
+  });
+
+  it('enforces the optional daily hour window in spa local time', async () => {
+    const raw = partsInTz(new Date(), TZ).hour;
+    const h = raw === 24 ? 0 : raw;
+    const far = (h + 6) % 24; // six hours away — never “now”, even across a rollover
+
+    // A one-hour window that excludes the current hour rejects the code…
+    await db
+      .update(T.promotions)
+      .set({ validFromHour: far, validUntilHour: far })
+      .where(eq(T.promotions.id, PROMO));
+    await expect(
+      quoteBooking(db, { branchId: ids.branch, treatmentId: ids.treatment, couponCode: 'ITPROMO20' }),
+    ).rejects.toThrow(/only valid between/);
+
+    // …and a window that covers now (and its neighbours) accepts it.
+    await db
+      .update(T.promotions)
+      .set({ validFromHour: (h + 23) % 24, validUntilHour: (h + 1) % 24 })
+      .where(eq(T.promotions.id, PROMO));
+    const ok = await quoteBooking(db, {
+      branchId: ids.branch,
+      treatmentId: ids.treatment,
+      couponCode: 'ITPROMO20',
+    });
+    expect(ok.couponCode).toBe('ITPROMO20');
+
+    await db
+      .update(T.promotions)
+      .set({ validFromHour: null, validUntilHour: null })
+      .where(eq(T.promotions.id, PROMO));
+  });
+
+  it('scopes a supplier-owned promotion to its own selected treatments', async () => {
+    const OWN = 'prm_it_own';
+    await db.insert(T.promotions).values({
+      id: OWN,
+      title: 'IT Branch Only Promo',
+      slug: 'it-branch-only-promo',
+      position: 'deal',
+      providerId: ids.provider,
+      branchId: ids.branch,
+      code: 'ITOWN20',
+      discountType: 'percent',
+      discountValue: 2000,
+      appliesTo: 'selected',
+      treatmentIds: [ids.treatment],
+      active: true,
+      maxUses: 0,
+    });
+
+    const ok = await quoteBooking(db, {
+      branchId: ids.branch,
+      treatmentId: ids.treatment,
+      couponCode: 'ITOWN20',
+    });
+    expect(ok.couponCode).toBe('ITOWN20');
+    expect(ok.pricing.discountAmount).toBe(80_000);
+
+    await expect(
+      quoteBooking(db, { branchId: ids.branch, treatmentId: FACIAL, couponCode: 'ITOWN20' }),
+    ).rejects.toThrow(/does not apply to the treatments/);
+
+    await db.delete(T.promotions).where(eq(T.promotions.id, OWN));
   });
 });

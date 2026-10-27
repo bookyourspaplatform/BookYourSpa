@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, sql } from 'drizzle-orm';
 import { CalendarDays, Receipt } from 'lucide-react';
 import { getDb } from '@/db';
 import {
@@ -359,10 +359,20 @@ async function BranchStaffTab({
 
 async function BranchPromotionsTab({ branchId }: { branchId: string }) {
   const db = await getDb();
-  const promoRows = await db.query.promotions.findMany({
-    where: eq(promotions.branchId, branchId),
-    orderBy: [desc(promotions.createdAt)],
-  });
+  const [promoRows, branchRow, linkRows] = await Promise.all([
+    db.query.promotions.findMany({
+      where: eq(promotions.branchId, branchId),
+      orderBy: [desc(promotions.createdAt)],
+    }),
+    db.query.branches.findFirst({
+      where: eq(branches.id, branchId),
+      columns: { providerId: true },
+    }),
+    db.query.branchTreatments.findMany({
+      where: eq(branchTreatments.branchId, branchId),
+      columns: { treatmentId: true },
+    }),
+  ]);
   const rows: PromotionRow[] = promoRows.map((p) => ({
     id: p.id,
     title: p.title,
@@ -371,8 +381,30 @@ async function BranchPromotionsTab({ branchId }: { branchId: string }) {
     startsAt: p.startsAt?.toISOString() ?? null,
     endsAt: p.endsAt?.toISOString() ?? null,
     active: p.active,
+    linkUrl: p.linkUrl,
+    sortOrder: p.sortOrder,
+    code: p.code,
+    discountType: p.discountType,
+    discountValue: p.discountValue,
+    currency: p.currency,
+    minAmount: p.minAmount,
+    maxUses: p.maxUses ?? 0,
+    usedCount: p.usedCount,
+    appliesTo: p.appliesTo,
+    treatmentIds: p.treatmentIds,
+    validFromHour: p.validFromHour,
+    validUntilHour: p.validUntilHour,
   }));
-  return <PromotionPanel branchId={branchId} rows={rows} />;
+  const linked = new Set(linkRows.map((l) => l.treatmentId));
+  const treatmentRows = branchRow
+    ? await db.query.treatments.findMany({
+        where: eq(treatments.providerId, branchRow.providerId),
+        orderBy: [asc(treatments.name)],
+        columns: { id: true, name: true },
+      })
+    : [];
+  const treatmentOptions = treatmentRows.filter((t) => linked.has(t.id));
+  return <PromotionPanel branchId={branchId} rows={rows} treatmentOptions={treatmentOptions} />;
 }
 
 /* -------------------------------- reviews tab ------------------------------- */

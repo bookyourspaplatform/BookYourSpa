@@ -74,6 +74,33 @@ export function partsInTz(date: Date, timeZone: string) {
   };
 }
 
+/**
+ * Human label for a promotion's optional daily hour window:
+ * "09:00–17:00", "from 09:00", "until 17:00" or "" when no hours are set.
+ */
+export function hourWindowLabel(
+  from: number | null | undefined,
+  until: number | null | undefined,
+): string {
+  const hh = (n: number) => `${String(n).padStart(2, '0')}:00`;
+  if (from != null && until != null) return `${hh(from)}–${hh(until)}`;
+  if (from != null) return `from ${hh(from)}`;
+  if (until != null) return `until ${hh(until)}`;
+  return '';
+}
+
+/** Hours 0–23 → "HH:00" for a time input (empty string when unset). */
+export function hourToTimeInput(hour: number | null | undefined): string {
+  return hour == null ? '' : `${String(hour).padStart(2, '0')}:00`;
+}
+
+/** "HH:MM" from a time input → whole hour 0–23, or null when empty/invalid. */
+export function timeInputToHour(value: string): number | null {
+  if (!value) return null;
+  const h = Number(value.slice(0, 2));
+  return Number.isInteger(h) && h >= 0 && h <= 23 ? h : null;
+}
+
 /** Minutes since midnight for a "HH:MM" string. */
 export function minutesOf(hhmm: string): number {
   const [h, m] = hhmm.split(':').map((v) => parseInt(v, 10));

@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, isNotNull, isNull, lt, lte, or, sql } from 'drizzle-orm';
 import type { AppDb } from '@/db';
 import {
   agents,
@@ -64,6 +64,28 @@ type ResolvedDiscount = {
 };
 
 /**
+ * Optional daily hour window in the spa's local timezone. Returns `null` when
+ * no window is set, otherwise whether the current local hour falls inside it.
+ * `from > until` means an overnight window (e.g. 22:00–06:00).
+ */
+function dailyHourWindow(
+  from: number | null,
+  until: number | null,
+  timezone: string,
+): { ok: boolean; window: string } | null {
+  if (from == null && until == null) return null;
+  const rawHour = partsInTz(new Date(), timezone).hour;
+  const h = rawHour === 24 ? 0 : rawHour;
+  const hh = (n: number) => `${String(n).padStart(2, '0')}:00`;
+  if (from != null && until != null) {
+    const ok = from <= until ? h >= from && h <= until : h >= from || h <= until;
+    return { ok, window: `between ${hh(from)} and ${hh(until)}` };
+  }
+  if (from != null) return { ok: h >= from, window: `from ${hh(from)}` };
+  return { ok: h <= (until as number), window: `until ${hh(until as number)}` };
+}
+
+/**
  * Resolve a checkout code: first a coupon (scoped codes), then a promotion
  * carrying a discount (general platform promotions unless a spa opted out;
  * optional treatment scope limits which treatments are discounted).
@@ -72,7 +94,7 @@ async function resolveDiscountCode(
   db: AppDb,
   opts: {
     code: string;
-    branch: { id: string; providerId: string; currency: string };
+    branch: { id: string; providerId: string; currency: string; timezone: string };
     /** Treatments in the cart — a scoped promotion needs at least one match. */
     treatmentIds: string[];
     listPrice: number;
@@ -88,6 +110,13 @@ async function resolveDiscountCode(
       branchCurrency: opts.branch.currency,
     });
     if (!applies.ok) throw new BookingError(applies.reason, 'coupon', 'couponCode');
+    const win = dailyHourWindow(coupon.validFromHour, coupon.validUntilHour, opts.branch.timezone);
+    if (win && !win.ok)
+      throw new BookingError(
+        `That code is only valid ${win.window} (spa local time).`,
+        'coupon',
+        'couponCode',
+      );
     const scopeOk =
       coupon.scope === 'global' ||
       (coupon.scope === 'provider' && coupon.providerId === opts.branch.providerId) ||
@@ -119,6 +148,7 @@ async function resolveDiscountCode(
 
   // Owner scope: a general promotion applies at every spa unless this one
   // opted out in its supplier console; provider/branch promos stay local.
+  let choice: { active: boolean; treatmentIds: string[] | null } | undefined;
   if (promo.branchId) {
     if (promo.branchId !== opts.branch.id)
       throw new BookingError('That promotion does not apply here.', 'coupon', 'couponCode');
@@ -126,18 +156,39 @@ async function resolveDiscountCode(
     if (promo.providerId !== opts.branch.providerId)
       throw new BookingError('That promotion does not apply here.', 'coupon', 'couponCode');
   } else {
-    const choice = await db.query.providerPromotions.findFirst({
+    choice = await db.query.providerPromotions.findFirst({
       where: and(
         eq(providerPromotions.providerId, opts.branch.providerId),
         eq(providerPromotions.promotionId, promo.id),
       ),
+      columns: { active: true, treatmentIds: true },
     });
     if (choice && !choice.active)
       throw new BookingError('That promotion is not available at this spa.', 'coupon', 'couponCode');
   }
 
-  // Treatment scope — empty/null means every treatment.
-  const scoped = promo.treatmentIds ?? [];
+  /* --- optional daily hour window, checked in the spa's local time --- */
+  const win = dailyHourWindow(promo.validFromHour, promo.validUntilHour, opts.branch.timezone);
+  if (win && !win.ok)
+    throw new BookingError(
+      `That promotion is only valid ${win.window} (spa local time).`,
+      'coupon',
+      'couponCode',
+    );
+
+  // Treatment scope — 'all' discounts every treatment at the spa. 'selected'
+  // takes the supplier's own list, or — for a platform promotion — the list
+  // this spa picked when it activated the offer (admin never picks treatments).
+  let scoped: string[] = [];
+  if (promo.appliesTo === 'selected') {
+    scoped = (promo.branchId || promo.providerId ? promo.treatmentIds : choice?.treatmentIds) ?? [];
+    if (!scoped.length)
+      throw new BookingError(
+        'That promotion is not yet available at this spa.',
+        'coupon',
+        'couponCode',
+      );
+  }
   if (scoped.length && !opts.treatmentIds.some((id) => scoped.includes(id)))
     throw new BookingError(
       'That promotion does not apply to the treatments in your cart.',
@@ -154,6 +205,131 @@ async function resolveDiscountCode(
       currency: promo.currency,
     },
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* Listing the codes a customer can redeem at one spa                  */
+/* ------------------------------------------------------------------ */
+
+export type BranchPromoCode = {
+  id: string;
+  title: string;
+  summary: string | null;
+  code: string;
+  discountLabel: string;
+  /** Effective treatment scope — empty = every treatment at this spa. */
+  treatmentIds: string[];
+  /** Optional daily hour window in the spa's local time. */
+  validFromHour: number | null;
+  validUntilHour: number | null;
+};
+
+/**
+ * Redeemable promotions currently offered at a branch: active, carrying a
+ * code and a discount, inside their date window, in owner scope for this spa
+ * and not switched off by it. Each row carries the *effective* treatment
+ * scope — for a platform “selected” promotion that is the list the spa itself
+ * picked when activating it; a promotion the spa has not chosen yet is left
+ * out because its code would be rejected at checkout.
+ */
+export async function redeemablePromotionsFor(
+  db: AppDb,
+  opts: { providerId: string; branchId: string; now?: Date },
+): Promise<BranchPromoCode[]> {
+  const now = opts.now ?? new Date();
+  const rows = await db.query.promotions.findMany({
+    where: and(
+      eq(promotions.active, true),
+      isNotNull(promotions.code),
+      isNotNull(promotions.discountType),
+      isNotNull(promotions.discountValue),
+      or(isNull(promotions.endsAt), gte(promotions.endsAt, now)),
+      or(isNull(promotions.startsAt), lte(promotions.startsAt, now)),
+      or(
+        and(isNull(promotions.providerId), isNull(promotions.branchId)),
+        eq(promotions.providerId, opts.providerId),
+        eq(promotions.branchId, opts.branchId),
+      ),
+    ),
+    orderBy: [asc(promotions.sortOrder)],
+  });
+  const choices = rows.length
+    ? await db.query.providerPromotions.findMany({
+        where: eq(providerPromotions.providerId, opts.providerId),
+        columns: { promotionId: true, active: true, treatmentIds: true },
+      })
+    : [];
+  const choiceBy = new Map(choices.map((c) => [c.promotionId, c]));
+
+  const out: BranchPromoCode[] = [];
+  for (const p of rows) {
+    const isPlatform = !p.providerId && !p.branchId;
+    if (isPlatform && choiceBy.get(p.id)?.active === false) continue; // spa opted out
+
+    let scoped: string[] = [];
+    if (p.appliesTo === 'selected') {
+      scoped = (isPlatform ? choiceBy.get(p.id)?.treatmentIds : p.treatmentIds) ?? [];
+      if (scoped.length === 0) continue; // spa has not picked its treatments yet
+    }
+    out.push({
+      id: p.id,
+      title: p.title,
+      summary: p.summary,
+      code: p.code,
+      discountLabel:
+        p.discountType === 'percent'
+          ? `${(p.discountValue ?? 0) / 100}% off`
+          : `${p.discountValue ?? 0} off`,
+      treatmentIds: scoped,
+      validFromHour: p.validFromHour,
+      validUntilHour: p.validUntilHour,
+    });
+  }
+  return couponsFor(db, opts, now, out);
+}
+
+/**
+ * Coupon codes from the `coupons` table that also work at this spa — same
+ * window/cap rules, plus their own scope (global / provider / branch / one
+ * treatment). Appended to the promotion rows above.
+ */
+async function couponsFor(
+  db: AppDb,
+  opts: { providerId: string; branchId: string },
+  now: Date,
+  out: BranchPromoCode[],
+): Promise<BranchPromoCode[]> {
+  const rows = await db.query.coupons.findMany({
+    where: and(
+      eq(coupons.active, true),
+      or(isNull(coupons.endsAt), gte(coupons.endsAt, now)),
+      or(isNull(coupons.startsAt), lte(coupons.startsAt, now)),
+      or(isNull(coupons.maxUses), eq(coupons.maxUses, 0), lt(coupons.usedCount, coupons.maxUses)),
+      or(
+        eq(coupons.scope, 'global'),
+        and(eq(coupons.scope, 'provider'), eq(coupons.providerId, opts.providerId)),
+        and(eq(coupons.scope, 'branch'), eq(coupons.branchId, opts.branchId)),
+        eq(coupons.scope, 'treatment'),
+      ),
+    ),
+    orderBy: [asc(coupons.startsAt)],
+  });
+  for (const c of rows) {
+    out.push({
+      id: c.id,
+      title: c.description || 'Promo code',
+      summary: c.description,
+      code: c.code,
+      discountLabel:
+        c.discountType === 'percent'
+          ? `${(c.discountValue ?? 0) / 100}% off`
+          : `${c.discountValue ?? 0} off`,
+      treatmentIds: c.scope === 'treatment' && c.treatmentId ? [c.treatmentId] : [],
+      validFromHour: c.validFromHour,
+      validUntilHour: c.validUntilHour,
+    });
+  }
+  return out;
 }
 
 type Tx = Parameters<Parameters<AppDb['transaction']>[0]>[0];
@@ -279,7 +455,7 @@ export async function quoteBooking(db: AppDb, input: QuoteInput): Promise<Quote>
   const discount = input.couponCode?.trim()
     ? await resolveDiscountCode(db, {
         code: input.couponCode,
-        branch: { id: branch.id, providerId: branch.providerId, currency: branch.currency },
+        branch: { id: branch.id, providerId: branch.providerId, currency: branch.currency, timezone: branch.timezone },
         treatmentIds: [treatment.id],
         listPrice,
       })
@@ -732,7 +908,7 @@ export async function quoteCart(db: AppDb, input: {
   const discount = input.couponCode?.trim()
     ? await resolveDiscountCode(db, {
         code: input.couponCode,
-        branch: { id: branch.id, providerId: branch.providerId, currency: branch.currency },
+        branch: { id: branch.id, providerId: branch.providerId, currency: branch.currency, timezone: branch.timezone },
         treatmentIds: lines.map((l) => l.treatmentId),
         listPrice,
       })

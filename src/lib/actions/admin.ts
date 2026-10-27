@@ -21,6 +21,7 @@ import {
   users,
   TREATMENT_CATEGORIES,
   PROMO_POSITIONS,
+  PROMO_APPLIES_TO,
   DISCOUNT_TYPES,
 } from '@/db/schema';
 import { branchPayload, branchSchema, uniqueBranchSlug } from '@/lib/branch';
@@ -636,15 +637,22 @@ const promoSchema = z.object({
   active: z.boolean(),
   sortOrder: z.number().int().min(0).max(999),
   /* Redeemable general promotion — valid at every spa that has not opted out. */
-  code: z.string().trim().max(40).optional().nullable(),
+  code: z.string().trim().min(2).max(40),
   discountType: z.enum(DISCOUNT_TYPES).optional().nullable(),
   /** percent = basis points (1500 = 15%), fixed = minor units. */
   discountValue: z.number().int().min(0).max(1_000_000_000).optional().nullable(),
   currency: z.string().length(3).optional().nullable(),
   minAmount: z.number().int().min(0).default(0),
   maxUses: z.number().int().min(0).default(0),
-  /** null/empty = every treatment; otherwise only the selected treatments. */
-  treatmentIds: z.array(z.string().max(40)).max(200).optional().nullable(),
+  /**
+   * “All treatments” or “Selected treatments”. Admin never picks the treatments
+   * itself — on a platform promotion the supplier chooses them when it
+   * activates the offer (stored in provider_promotions.treatment_ids).
+   */
+  appliesTo: z.enum(PROMO_APPLIES_TO).default('all'),
+  /** Optional daily hour window (spa local time), hours 0–23. */
+  validFromHour: z.number().int().min(0).max(23).optional().nullable(),
+  validUntilHour: z.number().int().min(0).max(23).optional().nullable(),
 });
 
 export async function savePromotion(input: z.infer<typeof promoSchema>): Promise<ActionResult<{ id: string }>> {
@@ -654,19 +662,15 @@ export async function savePromotion(input: z.infer<typeof promoSchema>): Promise
     const { user, db } = await adminCtx();
     const data = parsed.data;
 
-    const code = data.code?.trim() ? data.code.trim().toUpperCase() : null;
+    const code = data.code.trim().toUpperCase();
+    if (!code) return fail('Every promotion needs a promo code customers can redeem.');
     if (data.discountType && !(data.discountValue && data.discountValue > 0))
       return fail('Enter a discount value.');
-    if (data.discountType && !code)
-      return fail('A discount promotion needs a code customers can redeem.');
-    if (code) {
-      const dupe = await db.query.promotions.findFirst({
-        where: eq(promotions.code, code),
-        columns: { id: true },
-      });
-      if (dupe && dupe.id !== data.id) return fail('That code is already used by another promotion.');
-    }
-    const treatmentIds = [...new Set((data.treatmentIds ?? []).map((t) => t.trim()).filter(Boolean))];
+    const dupe = await db.query.promotions.findFirst({
+      where: eq(promotions.code, code),
+      columns: { id: true },
+    });
+    if (dupe && dupe.id !== data.id) return fail('That code is already used by another promotion.');
 
     const payload = {
       title: data.title,
@@ -683,7 +687,9 @@ export async function savePromotion(input: z.infer<typeof promoSchema>): Promise
       currency: data.currency?.trim() ? data.currency.trim().toUpperCase() : null,
       minAmount: data.minAmount ?? 0,
       maxUses: data.maxUses ?? 0,
-      treatmentIds: treatmentIds.length ? treatmentIds : null,
+      appliesTo: data.appliesTo,
+      validFromHour: data.validFromHour ?? null,
+      validUntilHour: data.validUntilHour ?? null,
     };
 
     if (data.id) {
@@ -695,8 +701,8 @@ export async function savePromotion(input: z.infer<typeof promoSchema>): Promise
     }
 
     let slug = slugify(data.title) || 'promo';
-    const dupe = await db.query.promotions.findFirst({ where: eq(promotions.slug, slug) });
-    if (dupe) slug = `${slug}-${Date.now().toString(36).slice(-4)}`;
+    const dupeSlug = await db.query.promotions.findFirst({ where: eq(promotions.slug, slug) });
+    if (dupeSlug) slug = `${slug}-${Date.now().toString(36).slice(-4)}`;
     const [created] = await db
       .insert(promotions)
       .values({ ...payload, id: newId('prm'), slug })
@@ -934,6 +940,9 @@ const couponSchema = z.object({
   maxUses: z.number().int().min(0).max(1_000_000),
   startsAt: z.string().optional().nullable(),
   endsAt: z.string().optional().nullable(),
+  /** Optional daily hour window (spa local time), hours 0–23. */
+  validFromHour: z.number().int().min(0).max(23).optional().nullable(),
+  validUntilHour: z.number().int().min(0).max(23).optional().nullable(),
   active: z.boolean(),
 });
 
@@ -956,6 +965,8 @@ export async function saveCoupon(input: z.infer<typeof couponSchema>): Promise<A
       maxUses: data.maxUses,
       startsAt: data.startsAt ? new Date(`${data.startsAt}T00:00:00Z`) : null,
       endsAt: data.endsAt ? new Date(`${data.endsAt}T23:59:59Z`) : null,
+      validFromHour: data.validFromHour ?? null,
+      validUntilHour: data.validUntilHour ?? null,
       active: data.active,
     };
 

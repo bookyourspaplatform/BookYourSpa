@@ -6,6 +6,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  smallint,
   text,
   timestamp,
   uniqueIndex,
@@ -100,6 +101,14 @@ export type DiscountType = (typeof DISCOUNT_TYPES)[number];
 
 export const PROMO_POSITIONS = ['hero', 'banner', 'deal'] as const;
 export type PromoPosition = (typeof PROMO_POSITIONS)[number];
+
+/**
+ * Which treatments a promotion discounts: every treatment at a spa, or a
+ * selection — admin marks “selected” on a platform promotion and the supplier
+ * picks the actual treatments when it activates the offer for its spa.
+ */
+export const PROMO_APPLIES_TO = ['all', 'selected'] as const;
+export type PromoAppliesTo = (typeof PROMO_APPLIES_TO)[number];
 
 export const SPA_CATEGORIES = [
   'day_spa',
@@ -814,6 +823,9 @@ export const coupons = pgTable(
     usedCount: integer('used_count').notNull().default(0),
     startsAt: timestamp('starts_at', { withTimezone: true }),
     endsAt: timestamp('ends_at', { withTimezone: true }),
+    /** Optional daily hour window (spa local time), same semantics as promotions. */
+    validFromHour: smallint('valid_from_hour'),
+    validUntilHour: smallint('valid_until_hour'),
     active: boolean('active').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
@@ -838,8 +850,8 @@ export const promotions = pgTable(
     position: text('position', { enum: PROMO_POSITIONS }).notNull().default('banner'),
     providerId: text('provider_id').references(() => providers.id, { onDelete: 'cascade' }),
     branchId: text('branch_id').references(() => branches.id, { onDelete: 'cascade' }),
-    /** Optional promo code — registered customers activate it at checkout. */
-    code: text('code'),
+    /** Promo code — every promotion must carry one; customers redeem it at checkout. */
+    code: text('code').notNull(),
     /** Discount fields — set on platform (general) promotions customers can redeem. */
     discountType: text('discount_type', { enum: DISCOUNT_TYPES }),
     /** percent = basis points (1500 = 15%), fixed = minor units. */
@@ -848,8 +860,18 @@ export const promotions = pgTable(
     minAmount: integer('min_amount').notNull().default(0),
     maxUses: integer('max_uses').default(0), // 0 = unlimited
     usedCount: integer('used_count').notNull().default(0),
-    /** null/empty = every treatment; otherwise only these treatments are discounted. */
+    /**
+     * 'all' = every treatment. 'selected' = only the listed treatments: for a
+     * supplier-owned promotion the list lives here, while a platform promotion
+     * is chosen per spa in provider_promotions.treatment_ids (admin only marks
+     * the intent — it never picks treatments itself).
+     */
+    appliesTo: text('applies_to', { enum: PROMO_APPLIES_TO }).notNull().default('all'),
+    /** Supplier-owned selection used when appliesTo = 'selected'. */
     treatmentIds: jsonb('treatment_ids').$type<string[] | null>(),
+    /** Optional daily hour window (spa local time), e.g. happy-hours 16:00–19:00. */
+    validFromHour: smallint('valid_from_hour'),
+    validUntilHour: smallint('valid_until_hour'),
     startsAt: timestamp('starts_at', { withTimezone: true }),
     endsAt: timestamp('ends_at', { withTimezone: true }),
     active: boolean('active').notNull().default(true),
@@ -880,6 +902,11 @@ export const providerPromotions = pgTable(
       .references(() => promotions.id, { onDelete: 'cascade' }),
     /** true = this spa offers the promotion, false = opted out. */
     active: boolean('active').notNull().default(true),
+    /**
+     * This spa's treatment selection when the platform promotion is scoped to
+     * “Selected treatments” — required before such an offer can be activated.
+     */
+    treatmentIds: jsonb('treatment_ids').$type<string[] | null>(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [uniqueIndex('provider_promotions_unique').on(t.providerId, t.promotionId)],

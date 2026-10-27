@@ -21,6 +21,8 @@ import {
   therapists,
   treatments,
   PROMO_POSITIONS,
+  PROMO_APPLIES_TO,
+  DISCOUNT_TYPES,
   STAFF_ROLES,
   STAFF_PAY_TYPES,
   USER_STATUSES,
@@ -1231,10 +1233,26 @@ const branchPromoSchema = z.object({
   branchId: z.string().min(1),
   title: z.string().min(2).max(160),
   summary: z.string().max(400).optional().nullable(),
+  linkUrl: z.string().max(400).optional().nullable(),
   position: z.enum(PROMO_POSITIONS),
   startsAt: z.string().optional().nullable(),
   endsAt: z.string().optional().nullable(),
   active: z.boolean().default(true),
+  sortOrder: z.number().int().min(0).max(999).default(0),
+  /* Redeemable code — the supplier form clones the admin promotion form. */
+  code: z.string().trim().min(2).max(40),
+  discountType: z.enum(DISCOUNT_TYPES).optional().nullable(),
+  /** percent = basis points (1500 = 15%), fixed = minor units. */
+  discountValue: z.number().int().min(0).max(1_000_000_000).optional().nullable(),
+  currency: z.string().length(3).optional().nullable(),
+  minAmount: z.number().int().min(0).default(0),
+  maxUses: z.number().int().min(0).default(0),
+  /** 'all' = every treatment at the branch; 'selected' = treatmentIds below. */
+  appliesTo: z.enum(PROMO_APPLIES_TO).default('all'),
+  treatmentIds: z.array(z.string().max(40)).max(200).optional().nullable(),
+  /** Optional daily hour window (spa local time), hours 0–23. */
+  validFromHour: z.number().int().min(0).max(23).optional().nullable(),
+  validUntilHour: z.number().int().min(0).max(23).optional().nullable(),
 });
 
 async function assertPromotion(db: AppDb, providerId: string, promotionId: string) {
@@ -1254,33 +1272,68 @@ export async function saveBranchPromotion(input: z.infer<typeof branchPromoSchem
     const { db, providerId, user } = await providerCtx();
     await assertBranch(db, providerId, parsed.data.branchId);
     const data = parsed.data;
+
+    const code = data.code.trim().toUpperCase();
+    if (!code) return fail('Every promotion needs a promo code customers can redeem.');
+    if (data.discountType && !(data.discountValue && data.discountValue > 0))
+      return fail('Enter a discount value.');
+    const dupe = await db.query.promotions.findFirst({
+      where: eq(promotions.code, code),
+      columns: { id: true },
+    });
+    if (dupe && dupe.id !== data.id) return fail('That code is already used by another promotion.');
+
+    // Treatment scope — only this spa's own treatments may be selected.
+    const treatmentIds = [...new Set((data.treatmentIds ?? []).map((t) => t.trim()).filter(Boolean))];
+    if (data.appliesTo === 'selected') {
+      if (treatmentIds.length === 0)
+        return fail('Pick at least one treatment, or switch back to “All treatments”.');
+      const owned = await db.query.treatments.findMany({
+        where: and(eq(treatments.providerId, providerId), inArray(treatments.id, treatmentIds)),
+        columns: { id: true },
+      });
+      if (owned.length !== treatmentIds.length) return fail('One of those treatments is not yours.');
+    }
+
     const payload = {
       title: data.title,
       summary: data.summary || null,
+      linkUrl: data.linkUrl || null,
       position: data.position,
       startsAt: data.startsAt ? new Date(`${data.startsAt}T00:00:00Z`) : null,
       endsAt: data.endsAt ? new Date(`${data.endsAt}T23:59:59Z`) : null,
       active: data.active,
+      sortOrder: data.sortOrder,
+      code,
+      discountType: data.discountType ?? null,
+      discountValue: data.discountType ? data.discountValue : null,
+      currency: data.currency?.trim() ? data.currency.trim().toUpperCase() : null,
+      minAmount: data.minAmount ?? 0,
+      maxUses: data.maxUses ?? 0,
+      appliesTo: data.appliesTo,
+      treatmentIds: data.appliesTo === 'selected' ? treatmentIds : null,
+      validFromHour: data.validFromHour ?? null,
+      validUntilHour: data.validUntilHour ?? null,
     };
 
     if (data.id) {
       await assertPromotion(db, providerId, data.id);
       await db.update(promotions).set(payload).where(eq(promotions.id, data.id));
       await logAudit({ actorId: user.id, actorRole: user.role, action: 'promo.updated', entity: 'promotion', entityId: data.id });
-      revalidateProvider(providerId, [`/provider/branches/${data.branchId}`]);
+      revalidateProvider(providerId, ['/provider/promotions', `/provider/branches/${data.branchId}`]);
       revalidatePath('/deals');
       return { ok: true, data: { id: data.id } };
     }
 
     let slug = slugify(data.title) || 'promo';
-    const dupe = await db.query.promotions.findFirst({ where: eq(promotions.slug, slug) });
-    if (dupe) slug = `${slug}-${Date.now().toString(36).slice(-4)}`;
+    const dupeSlug = await db.query.promotions.findFirst({ where: eq(promotions.slug, slug) });
+    if (dupeSlug) slug = `${slug}-${Date.now().toString(36).slice(-4)}`;
     const [created] = await db
       .insert(promotions)
       .values({ ...payload, id: newId('prm'), slug, providerId, branchId: data.branchId })
       .returning({ id: promotions.id });
     await logAudit({ actorId: user.id, actorRole: user.role, action: 'promo.created', entity: 'promotion', entityId: created!.id });
-    revalidateProvider(providerId, [`/provider/branches/${data.branchId}`]);
+    revalidateProvider(providerId, ['/provider/promotions', `/provider/branches/${data.branchId}`]);
     revalidatePath('/deals');
     return { ok: true, data: { id: created!.id } };
   } catch {
@@ -1306,16 +1359,21 @@ export async function setPromotionActive(promotionId: string, active: boolean): 
  * Opt this spa in or out of a platform (general) promotion. General
  * promotions are valid everywhere by default — this records the spa's own
  * choice, so a supplier can deactivate any offer it does not want to run.
+ *
+ * When the promotion is scoped to “Selected treatments”, the spa must pass its
+ * treatment list (and can re-pass it later to change the selection); the offer
+ * cannot be activated until at least one treatment is chosen.
  */
 export async function setProviderPromotionActive(
   promotionId: string,
   active: boolean,
+  treatmentIds?: string[] | null,
 ): Promise<ActionResult> {
   try {
     const { db, providerId, user } = await providerCtx();
     const promo = await db.query.promotions.findFirst({
       where: eq(promotions.id, promotionId),
-      columns: { id: true, providerId: true, branchId: true },
+      columns: { id: true, providerId: true, branchId: true, appliesTo: true },
     });
     if (!promo) return fail('Promotion not found.');
     if (promo.providerId || promo.branchId)
@@ -1327,14 +1385,44 @@ export async function setProviderPromotionActive(
         eq(providerPromotions.promotionId, promotionId),
       ),
     });
-    if (existing) {
-      if (existing.active !== active) {
-        await db.update(providerPromotions).set({ active }).where(eq(providerPromotions.id, existing.id));
+
+    // Resolve this spa's treatment selection for a “selected” promotion.
+    let selection: string[] | null = existing?.treatmentIds ?? null;
+    if (promo.appliesTo === 'selected') {
+      if (treatmentIds) {
+        const next = [...new Set(treatmentIds.map((t) => t.trim()).filter(Boolean))];
+        if (next.length === 0) return fail('Pick at least one treatment for this promotion.');
+        const owned = await db.query.treatments.findMany({
+          where: and(eq(treatments.providerId, providerId), inArray(treatments.id, next)),
+          columns: { id: true },
+        });
+        if (owned.length !== next.length) return fail('One of those treatments is not yours.');
+        selection = next;
       }
+      if (active && !(selection && selection.length))
+        return fail('Choose which treatments this promotion applies to before activating it.');
+    }
+
+    if (existing) {
+      const patch: { active?: boolean; treatmentIds?: string[] | null } = {};
+      if (existing.active !== active) patch.active = active;
+      if (
+        promo.appliesTo === 'selected' &&
+        JSON.stringify(existing.treatmentIds ?? []) !== JSON.stringify(selection ?? [])
+      )
+        patch.treatmentIds = selection;
+      if (Object.keys(patch).length > 0)
+        await db.update(providerPromotions).set(patch).where(eq(providerPromotions.id, existing.id));
     } else {
       await db
         .insert(providerPromotions)
-        .values({ id: newId('prp'), providerId, promotionId, active });
+        .values({
+          id: newId('prp'),
+          providerId,
+          promotionId,
+          active,
+          treatmentIds: promo.appliesTo === 'selected' ? selection : null,
+        });
     }
 
     await logAudit({
@@ -1343,7 +1431,7 @@ export async function setProviderPromotionActive(
       action: 'provider.promo_choice',
       entity: 'promotion',
       entityId: promotionId,
-      meta: { active },
+      meta: { active, treatments: selection?.length ?? null },
     });
     revalidateProvider(providerId, ['/provider/promotions']);
     revalidatePath('/deals');

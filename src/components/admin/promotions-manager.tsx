@@ -9,7 +9,7 @@ import { Button, buttonClasses } from '@/components/ui/button';
 import { Field, Input, Textarea, inputCls } from '@/components/ui/field';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/components/ui/toast';
-import { cn } from '@/lib/utils';
+import { cn, hourToTimeInput, hourWindowLabel, timeInputToHour } from '@/lib/utils';
 
 /* ------------------------------ promotions --------------------------- */
 
@@ -23,14 +23,17 @@ type PromoRow = {
   endsAt: string | null;
   active: boolean;
   sortOrder: number;
-  code: string | null;
+  code: string;
   discountType: string | null;
   discountValue: number | null;
   currency: string | null;
   minAmount: number;
   maxUses: number;
   usedCount: number;
-  treatmentIds: string[] | null;
+  /** 'all' = every treatment; 'selected' = each spa picks its own list. */
+  appliesTo: string;
+  validFromHour: number | null;
+  validUntilHour: number | null;
 };
 
 export type TreatmentOption = { id: string; name: string; providerName: string };
@@ -53,7 +56,9 @@ type PromoDraft = {
   minAmount: number;
   maxUses: number;
   scope: 'all' | 'selected';
-  treatmentIds: string[];
+  /** Optional daily hour window — "HH:MM" or empty for all day. */
+  validFrom: string;
+  validUntil: string;
 };
 
 const EMPTY_PROMO: PromoDraft = {
@@ -72,7 +77,8 @@ const EMPTY_PROMO: PromoDraft = {
   minAmount: 0,
   maxUses: 0,
   scope: 'all',
-  treatmentIds: [],
+  validFrom: '',
+  validUntil: '',
 };
 
 function toDateInput(v: string | null): string {
@@ -81,16 +87,9 @@ function toDateInput(v: string | null): string {
   return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
 }
 
-export function PromotionsManager({
-  promotions,
-  treatmentOptions,
-}: {
-  promotions: PromoRow[];
-  treatmentOptions: TreatmentOption[];
-}) {
+export function PromotionsManager({ promotions }: { promotions: PromoRow[] }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<PromoDraft>(EMPTY_PROMO);
-  const [treatmentQuery, setTreatmentQuery] = useState('');
   const [pending, startTransition] = useTransition();
   const router = useRouter();
   const toast = useToast();
@@ -100,12 +99,8 @@ export function PromotionsManager({
   }
 
   function save() {
-    if (draft.discountMode !== 'none' && !draft.code.trim()) {
-      toast.error('Add a promo code', 'Customers need a code to activate this discount.');
-      return;
-    }
-    if (draft.scope === 'selected' && draft.treatmentIds.length === 0) {
-      toast.error('Pick at least one treatment', 'Or switch back to “All treatments”.');
+    if (!draft.code.trim()) {
+      toast.error('Add a promo code', 'Every promotion needs a code customers can redeem.');
       return;
     }
     startTransition(async () => {
@@ -119,18 +114,19 @@ export function PromotionsManager({
         endsAt: draft.endsAt || null,
         active: draft.active,
         sortOrder: draft.sortOrder,
-        code: draft.code.trim() ? draft.code.trim().toUpperCase() : null,
+        code: draft.code.trim().toUpperCase(),
         discountType: draft.discountMode === 'none' ? null : draft.discountMode,
         discountValue: draft.discountMode === 'none' ? null : draft.discountValue,
         currency: draft.discountMode === 'fixed' ? draft.currency : null,
         minAmount: draft.minAmount,
         maxUses: draft.maxUses,
-        treatmentIds: draft.scope === 'selected' ? draft.treatmentIds : [],
+        appliesTo: draft.scope,
+        validFromHour: timeInputToHour(draft.validFrom),
+        validUntilHour: timeInputToHour(draft.validUntil),
       });
       if (res.ok) {
         toast.success(draft.id ? 'Promotion updated' : 'Promotion created');
         setOpen(false);
-        setTreatmentQuery('');
         router.refresh();
       } else {
         toast.error('Could not save', res.error);
@@ -190,9 +186,12 @@ export function PromotionsManager({
                 {p.summary && <p className="line-clamp-1 text-[13px] text-ink-500">{p.summary}</p>}
                 <p className="text-[12.5px] text-ink-400">
                   general — valid at all spas ·{' '}
-                  {p.treatmentIds?.length ? `${p.treatmentIds.length} selected treatments` : 'all treatments'} ·{' '}
+                  {p.appliesTo === 'selected' ? 'selected treatments (each spa picks its own)' : 'all treatments'} ·{' '}
                   {p.startsAt ? `from ${toDateInput(p.startsAt)}` : 'no start'} →{' '}
                   {p.endsAt ? toDateInput(p.endsAt) : 'no end'}
+                  {p.validFromHour != null || p.validUntilHour != null
+                    ? ` · daily ${hourWindowLabel(p.validFromHour, p.validUntilHour)}`
+                    : ''}
                   {p.code ? ` · used ${p.usedCount}/${p.maxUses || '∞'}` : ''}
                 </p>
               </div>
@@ -216,10 +215,10 @@ export function PromotionsManager({
                       currency: p.currency ?? 'AED',
                       minAmount: p.minAmount,
                       maxUses: p.maxUses,
-                      scope: p.treatmentIds?.length ? 'selected' : 'all',
-                      treatmentIds: p.treatmentIds ?? [],
+                      scope: p.appliesTo === 'selected' ? 'selected' : 'all',
+                      validFrom: hourToTimeInput(p.validFromHour),
+                      validUntil: hourToTimeInput(p.validUntilHour),
                     });
-                    setTreatmentQuery('');
                     setOpen(true);
                   }}
                   className={buttonClasses('outline', 'sm')}
@@ -280,14 +279,14 @@ export function PromotionsManager({
           <div>
             <p className="text-[13px] font-semibold uppercase tracking-wide text-ink-400">Discount code</p>
             <p className="mt-0.5 text-[12.5px] text-ink-500">
-              Optional — with a discount, registered customers see this promotion at checkout and activate it only if
-              they want it. It is valid automatically at every spa (a spa can switch itself off in its console).
-              Leave it off for a display-only campaign.
+              Every promotion needs a code. Registered customers see it at checkout and activate it only if they
+              want it. It is valid automatically at every spa (a spa can switch itself off in its console), unless
+              you limit it to selected treatments.
             </p>
           </div>
 
           <div className="grid gap-4 sm:grid-cols-3">
-            <Field label="Promo code">
+            <Field label="Promo code" required>
               {({ id }) => (
                 <Input
                   id={id}
@@ -296,6 +295,7 @@ export function PromotionsManager({
                   placeholder="SPA20"
                   className="font-mono"
                   maxLength={40}
+                  required
                 />
               )}
             </Field>
@@ -364,7 +364,33 @@ export function PromotionsManager({
                 <Input id={id} type="number" min={0} value={draft.maxUses} onChange={(e) => set('maxUses', Number(e.target.value))} />
               )}
             </Field>
+            <Field label="Valid from (hour)">
+              {({ id }) => (
+                <Input
+                  id={id}
+                  type="time"
+                  step={3600}
+                  value={draft.validFrom}
+                  onChange={(e) => set('validFrom', e.target.value)}
+                />
+              )}
+            </Field>
+            <Field label="Valid until (hour)">
+              {({ id }) => (
+                <Input
+                  id={id}
+                  type="time"
+                  step={3600}
+                  value={draft.validUntil}
+                  onChange={(e) => set('validUntil', e.target.value)}
+                />
+              )}
+            </Field>
           </div>
+          <p className="-mt-1 text-[12px] text-ink-400">
+            Hour validity (optional) — the code only works between these hours each day, spa local time. Leave both
+            empty for all day.
+          </p>
 
           <div>
             <p className="text-[13px] font-medium text-ink-700">Applies to</p>
@@ -387,60 +413,15 @@ export function PromotionsManager({
                   onChange={() => setDraft((d) => ({ ...d, scope: 'selected' }))}
                   className="size-4 accent-[#20524c]"
                 />
-                Selected treatments{draft.treatmentIds.length > 0 && ` (${draft.treatmentIds.length} picked)`}
+                Selected treatments
               </label>
             </div>
 
             {draft.scope === 'selected' && (
-              <div className="mt-2">
-                <input
-                  value={treatmentQuery}
-                  onChange={(e) => setTreatmentQuery(e.target.value)}
-                  placeholder="Search treatments or spas…"
-                  aria-label="Search treatments"
-                  className={cn(inputCls(), 'h-10')}
-                />
-                <ul className="mt-2 max-h-56 divide-y divide-ink-50 overflow-y-auto rounded-xl border border-ink-100 bg-white">
-                  {treatmentOptions
-                    .filter((t) => {
-                      const q = treatmentQuery.trim().toLowerCase();
-                      return !q || `${t.name} ${t.providerName}`.toLowerCase().includes(q);
-                    })
-                    .slice(0, 100)
-                    .map((t) => {
-                      const on = draft.treatmentIds.includes(t.id);
-                      return (
-                        <li key={t.id}>
-                          <label className="flex cursor-pointer items-center gap-2.5 px-3 py-2 text-sm hover:bg-sand-50">
-                            <input
-                              type="checkbox"
-                              checked={on}
-                              className="size-4 accent-[#20524c]"
-                              onChange={() =>
-                                setDraft((d) => ({
-                                  ...d,
-                                  treatmentIds: on
-                                    ? d.treatmentIds.filter((x) => x !== t.id)
-                                    : [...d.treatmentIds, t.id],
-                                }))
-                              }
-                            />
-                            <span className="min-w-0 flex-1 truncate">{t.name}</span>
-                            <span className="shrink-0 text-[12px] text-ink-400">{t.providerName}</span>
-                          </label>
-                        </li>
-                      );
-                    })}
-                  {treatmentOptions.length === 0 && (
-                    <li className="px-3 py-3 text-[13px] text-ink-500">No treatments yet — add one from Providers first.</li>
-                  )}
-                </ul>
-                <p className="mt-1 text-[12px] text-ink-400">
-                  {draft.treatmentIds.length > 0
-                    ? `${draft.treatmentIds.length} treatment${draft.treatmentIds.length === 1 ? '' : 's'} picked.`
-                    : 'The discount will only apply to the treatments you pick.'}
-                </p>
-              </div>
+              <p className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] leading-relaxed text-amber-800">
+                You don&apos;t pick the treatments here — each spa selects the exact treatments this code applies to
+                when it activates the promotion in its supplier dashboard.
+              </p>
             )}
           </div>
         </div>
@@ -471,6 +452,8 @@ type CouponRow = {
   usedCount: number;
   startsAt: string | null;
   endsAt: string | null;
+  validFromHour: number | null;
+  validUntilHour: number | null;
   active: boolean;
 };
 
@@ -485,6 +468,8 @@ type CouponDraft = {
   maxUses: number;
   startsAt: string;
   endsAt: string;
+  validFrom: string;
+  validUntil: string;
   active: boolean;
 };
 
@@ -498,6 +483,8 @@ const EMPTY_COUPON: CouponDraft = {
   maxUses: 0,
   startsAt: '',
   endsAt: '',
+  validFrom: '',
+  validUntil: '',
   active: true,
 };
 
@@ -514,7 +501,11 @@ export function CouponsManager({ coupons }: { coupons: CouponRow[] }) {
 
   function save() {
     startTransition(async () => {
-      const res = await saveCoupon(draft);
+      const res = await saveCoupon({
+        ...draft,
+        validFromHour: timeInputToHour(draft.validFrom),
+        validUntilHour: timeInputToHour(draft.validUntil),
+      });
       if (res.ok) {
         toast.success(draft.id ? 'Coupon updated' : 'Coupon created');
         setOpen(false);
@@ -575,6 +566,9 @@ export function CouponsManager({ coupons }: { coupons: CouponRow[] }) {
                   used {c.usedCount}/{c.maxUses || '∞'} · {c.startsAt ? `from ${toDateInput(c.startsAt)}` : 'no start'} →{' '}
                   {c.endsAt ? toDateInput(c.endsAt) : 'no end'}
                   {c.minAmount > 0 ? ` · min spend ${c.minAmount}` : ''}
+                  {hourWindowLabel(c.validFromHour, c.validUntilHour)
+                    ? ` · daily ${hourWindowLabel(c.validFromHour, c.validUntilHour)}`
+                    : ''}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -592,6 +586,8 @@ export function CouponsManager({ coupons }: { coupons: CouponRow[] }) {
                       maxUses: c.maxUses ?? 0,
                       startsAt: toDateInput(c.startsAt),
                       endsAt: toDateInput(c.endsAt),
+                      validFrom: hourToTimeInput(c.validFromHour),
+                      validUntil: hourToTimeInput(c.validUntilHour),
                       active: c.active,
                     });
                     setOpen(true);
@@ -679,7 +675,21 @@ export function CouponsManager({ coupons }: { coupons: CouponRow[] }) {
           <Field label="Description" className="sm:col-span-2">
             {({ id }) => <Input id={id} value={draft.description} onChange={(e) => set('description', e.target.value)} maxLength={240} />}
           </Field>
+          <Field label="Valid from (hour)">
+            {({ id }) => (
+              <Input id={id} type="time" step={3600} value={draft.validFrom} onChange={(e) => set('validFrom', e.target.value)} />
+            )}
+          </Field>
+          <Field label="Valid until (hour)">
+            {({ id }) => (
+              <Input id={id} type="time" step={3600} value={draft.validUntil} onChange={(e) => set('validUntil', e.target.value)} />
+            )}
+          </Field>
         </div>
+        <p className="mt-1 text-[12px] text-ink-400">
+          Hour validity (optional) — the code only works between these hours each day, spa local time. Leave both
+          empty for all day.
+        </p>
 
         <label className={cn('mt-4 flex items-center gap-2 text-sm text-ink-700')}>
           <input type="checkbox" checked={draft.active} onChange={(e) => set('active', e.target.checked)} className="size-4 accent-[#20524c]" />

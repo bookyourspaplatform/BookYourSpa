@@ -21,7 +21,7 @@ import { Field, Input, Textarea } from '@/components/ui/field';
 import { Badge } from '@/components/ui/badge';
 import { GREEN_BTN } from '@/components/ui/classes';
 import { formatMoney } from '@/lib/money';
-import { cn, formatDate } from '@/lib/utils';
+import { cn, formatDate, hourWindowLabel } from '@/lib/utils';
 import { CATEGORY_LABELS } from '@/lib/catalog';
 import { useToast } from '@/components/ui/toast';
 import type { Role } from '@/db/schema';
@@ -123,7 +123,21 @@ type PromoOffer = {
   discountLabel: string;
   /** null/empty = applies to every treatment. */
   treatmentIds: string[] | null;
+  /** Optional daily hour window (spa local time). */
+  validFromHour: number | null;
+  validUntilHour: number | null;
 };
+
+/** “all treatments” or the treatment names a promo code is valid for. */
+function validOnLabel(ids: string[] | null | undefined, list: { id: string; name: string }[]): string {
+  if (!ids?.length) return 'all treatments';
+  const names = ids
+    .map((id) => list.find((t) => t.id === id)?.name)
+    .filter((name): name is string => Boolean(name));
+  if (names.length === 0) return 'selected treatments';
+  const shown = names.slice(0, 3).join(', ');
+  return names.length > 3 ? `${shown} +${names.length - 3} more` : shown;
+}
 
 export function BookingWizard({
   providerSlug,
@@ -1314,6 +1328,12 @@ export function BookingWizard({
                             {p.summary && (
                               <p className="mt-0.5 line-clamp-1 text-[13px] text-ink-500">{p.summary}</p>
                             )}
+                            <p className="mt-0.5 text-[12.5px] text-ink-400">
+                              Valid on {validOnLabel(p.treatmentIds, treatments)}
+                              {hourWindowLabel(p.validFromHour, p.validUntilHour)
+                                ? ` · daily ${hourWindowLabel(p.validFromHour, p.validUntilHour)}`
+                                : ''}
+                            </p>
                           </div>
                           <button
                             type="button"
