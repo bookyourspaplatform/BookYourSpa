@@ -289,24 +289,39 @@ export async function importGoogleMaps(rawUrl: string): Promise<GoogleMapsImport
     const key = process.env.GOOGLE_MAPS_API_KEY;
     if (key) {
       try {
-        // Prefer the placeId embedded in the URL; otherwise look up by coordinates.
+        // Prefer the placeId embedded in the URL; share links often carry a
+        // hex id (0x2dd…:0x38aa…) the API rejects, so fall back to a nearby
+        // search and match the place by its name from the link.
         let placeId = resolved.match(/!1s(ChIJ[\w-]+)/)?.[1] ?? null;
         if (!placeId) {
           const search = await fetch('https://places.googleapis.com/v1/places:searchNearby', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': key },
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Goog-Api-Key': key,
+              'X-Goog-FieldMask': 'places.id,places.displayName,places.types',
+            },
             body: JSON.stringify({
               locationRestriction: {
-                circle: { center: { latitude: Number(parsed.lat), longitude: Number(parsed.lng) }, radius: 80 },
+                circle: { center: { latitude: Number(parsed.lat), longitude: Number(parsed.lng) }, radius: 150 },
               },
-              includedTypes: ['spa', 'health'],
-              maxResultCount: 1,
+              includedTypes: ['spa', 'health', 'beauty_salon'],
+              maxResultCount: 5,
             }),
             signal: AbortSignal.timeout(8000),
           }).catch(() => null);
           if (search?.ok) {
-            const json = (await search.json()) as { places?: { id?: string }[] };
-            placeId = json.places?.[0]?.id ?? null;
+            const json = (await search.json()) as {
+              places?: { id: string; displayName?: { text?: string } }[];
+            };
+            const places = json.places ?? [];
+            const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+            const want = norm(parsed.name ?? '');
+            // Exact name wins; otherwise accept a one-word-stub match only when
+            // the search returned a single candidate — never guess between two.
+            const exact = places.find((p) => want.length > 2 && norm(p.displayName?.text ?? '') === want);
+            const partial = places.find((p) => want.length > 2 && norm(p.displayName?.text ?? '').includes(want));
+            placeId = exact?.id ?? partial?.id ?? (places.length === 1 ? places[0]!.id : null);
           }
         }
         if (placeId) {
