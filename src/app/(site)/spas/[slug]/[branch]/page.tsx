@@ -24,10 +24,11 @@ import { JsonLd } from '@/components/json-ld';
 import { Badge } from '@/components/ui/badge';
 import { GREEN_BTN } from '@/components/ui/classes';
 import { formatMoney } from '@/lib/money';
-import { dateKeyInTz, formatDate, hourWindowLabel } from '@/lib/utils';
+import { dateKeyInTz, hourWindowLabel } from '@/lib/utils';
 import { SpaCard, priceLevel } from '@/components/site/spa-card';
 import { TreatmentSelectList } from '@/components/site/treatment-select-list';
 import { SpaGallery } from '@/components/site/spa-gallery';
+import { ReviewList } from '@/components/site/review-list';
 import { ClaimSpaCard, type ClaimSpaState } from '@/components/site/claim-spa-card';
 
 export const dynamic = 'force-dynamic';
@@ -582,37 +583,8 @@ export default async function BranchDetailPage({
                   ({rating?.count ?? 0})
                 </span>
               </h2>
-              <div className="mt-4 space-y-3">
-                {reviews.map((r) => (
-                  <article
-                    key={r.id}
-                    className="rounded-3xl border border-ink-100 bg-white p-4 sm:p-5"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-center gap-3">
-                        <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-brand-100 text-[15px] font-semibold text-brand-700">
-                          {r.guestName.trim().charAt(0).toUpperCase() || 'G'}
-                        </span>
-                        <div>
-                          <p className="text-[14.5px] font-medium text-ink-800">{r.guestName}</p>
-                          <p className="text-[12.5px] text-ink-400">
-                            {formatDate(r.createdAt)} ·{' '}
-                            {r.bookingId ? 'Verified booking' : 'Guest review'}
-                          </p>
-                        </div>
-                      </div>
-                      <Stars value={r.rating} />
-                    </div>
-                    {r.comment && (
-                      <p className="mt-3 text-[14px] leading-relaxed text-ink-600">{r.comment}</p>
-                    )}
-                  </article>
-                ))}
-                {reviews.length === 0 && (
-                  <p className="rounded-3xl border border-dashed border-ink-200 bg-white p-8 text-center text-sm text-ink-500">
-                    No reviews yet — leave one after your visit.
-                  </p>
-                )}
+              <div className="mt-4">
+                <ReviewList reviews={reviews} />
               </div>
             </section>
 

@@ -1,0 +1,1 @@
+ALTER TABLE "reviews" ADD COLUMN "source" text DEFAULT 'platform' NOT NULL;

@@ -988,6 +988,10 @@ export const bookingProductsRelations = relations(bookingProducts, ({ one }) => 
 export const REVIEW_STATUSES = ['pending', 'published', 'hidden'] as const;
 export type ReviewStatus = (typeof REVIEW_STATUSES)[number];
 
+/** Where a review came from — Google Maps imports are labelled on the page. */
+export const REVIEW_SOURCES = ['platform', 'google'] as const;
+export type ReviewSource = (typeof REVIEW_SOURCES)[number];
+
 export const reviews = pgTable(
   'reviews',
   {
@@ -1001,6 +1005,8 @@ export const reviews = pgTable(
     comment: text('comment'),
     /** Providers publish/hide reviews; hidden ones never show publicly. */
     status: text('status', { enum: REVIEW_STATUSES }).notNull().default('pending'),
+    /** "google" = imported from the spa's Google Maps listing. */
+    source: text('source', { enum: REVIEW_SOURCES }).notNull().default('platform'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .defaultNow()

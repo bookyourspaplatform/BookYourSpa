@@ -524,7 +524,7 @@ export type BranchDetail = {
   promos: Promotion[];
   /** Published review aggregate for this outlet. */
   rating: { avg: number; count: number } | null;
-  /** Recent published reviews for this outlet. */
+  /** Recent published reviews for this outlet (the page showcases 10 at a time). */
   reviews: {
     id: string;
     guestName: string;
@@ -532,6 +532,7 @@ export type BranchDetail = {
     comment: string | null;
     createdAt: Date;
     bookingId: string | null;
+    source: string;
   }[];
 };
 
@@ -589,11 +590,12 @@ export async function getBranchDetail(
         comment: reviews.comment,
         createdAt: reviews.createdAt,
         bookingId: reviews.bookingId,
+        source: reviews.source,
       })
       .from(reviews)
       .where(and(eq(reviews.branchId, branch.id), eq(reviews.status, 'published')))
       .orderBy(desc(reviews.createdAt))
-      .limit(6),
+      .limit(50),
   ]);
 
   const ratingAgg = ratingRow[0];

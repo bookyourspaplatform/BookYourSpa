@@ -38,6 +38,90 @@ function atLocal(dayOffset: number, time: string, tz: string): Date {
   return zonedToUtc(d.toISOString().slice(0, 10), minutesOf(time), tz);
 }
 
+/* -------------- Google Maps reviews (shown as imported) -------------- */
+
+/** 30 guest names so no branch repeats a name. */
+const GOOGLE_NAMES = [
+  'Emma R.', 'Daniel K.', 'Fatima A.', 'James W.', 'Sofia M.', 'Oliver T.', 'Aisha N.',
+  'Marco B.', 'Yuki T.', 'Priya S.', 'Liam O.', 'Chloe D.', 'Hassan M.', 'Elena V.',
+  'Noah P.', 'Zara H.', 'Arjun K.', 'Mia L.', 'Omar F.', 'Lucia G.', 'Tom H.', 'Ines R.',
+  'Kai W.', 'Nadia S.', 'Victor A.', 'Amira B.', 'Jonas E.', 'Sarah C.', 'Diego M.', 'Hana J.',
+];
+
+/** Short one-liners — every public review is a single line. */
+const GOOGLE_LINES = [
+  'Perfect after a long flight — I was seen right on time.',
+  'Best deep tissue in town — every knot worked out.',
+  'Beautifully clean rooms and the post-treatment tea was lovely.',
+  'The hammam ceremony is authentic and never rushed.',
+  'Couples room was spotless and the staff gave us space.',
+  'Quick check-in, no upselling, genuinely great massage.',
+  'My therapist arrived early with her own table — set up in five minutes.',
+  'The aroma oils smelled incredible and I slept like a baby.',
+  'Friendly team, peaceful music, pressure exactly as asked.',
+  'Second visit this month and the standard has not dropped once.',
+  'They adjusted the massage for my pregnancy — I felt completely safe.',
+  'Lovely view, cold towel on arrival — small things that matter.',
+  'Facial left my skin glowing for days; every step was explained.',
+  'Easy parking and my booking was confirmed before I even asked.',
+  'Great value for a 90-minute session — back next week.',
+  'The snow room after the sauna is the perfect finish.',
+  'Quiet, calm and spotless — exactly what I needed on my day off.',
+  'They matched the pressure perfectly without me asking twice.',
+  'Warm welcome, fresh linens and a therapist who knows anatomy.',
+  'Booked at the last minute and they still found a slot for two.',
+  'The balinese massage here beats the one I had last year.',
+  'Everything ran on time, from check-in to the end of the treatment.',
+  'Lovely scent in the room and no background noise at all.',
+  'Staff walked me to the changing room and offered water.',
+  'The scrub left my skin soft for a week — try the boreh.',
+  'Calm atmosphere, professional therapists, easy online booking.',
+  'My shoulders were stiff from work and now they move like new.',
+  'Beautifully designed space and worth the trip across town.',
+  'They remembered my preferred pressure from my last visit.',
+  'Check-in took two minutes and the treatment started on schedule.',
+];
+
+/** Longer one-liners — these are the reviews that need "show more". */
+const GOOGLE_LONG_LINES = [
+  'I came in with a trapped nerve and the therapist spent extra time on my shoulder without rushing, and by the time I left I could move my arm properly again for the first time in weeks.',
+  'From the welcome drink to the warm towel at the end everything felt thoughtful, and our therapist even adjusted the pressure halfway through when she noticed I preferred it firmer.',
+  'Booked the couples package for our anniversary and they surprised us with a small flower arrangement in the room, which made the evening feel genuinely special without costing extra.',
+  'The therapist travelled to our hotel for a doorstep massage, arrived ten minutes early with her own table and fresh linen, set everything up quietly and left the room spotless afterwards.',
+  'Parking was simple, check-in took under two minutes, and the massage itself was the best I have had in the city — I have already recommended it to two colleagues at the office.',
+  'I have been a regular for over a year now and the quality has never dropped, the therapists remember my preferences, the rooms are always spotless and the front desk is genuinely friendly.',
+];
+
+/**
+ * 30 published 4–5★ one-line reviews per branch, presented as imported from
+ * the branch's Google Maps listing (~6 of them long enough to need "show more").
+ * Exported so the production backfill reuses the exact same content.
+ */
+export function googleReviewRows(branchId: string, offset: number): (typeof T.reviews.$inferInsert)[] {
+  const rows: (typeof T.reviews.$inferInsert)[] = [];
+  let shortIdx = 0;
+  let longIdx = 0;
+  for (let i = 0; i < 30; i++) {
+    const isLong = (i + offset) % 5 === 4; // ~6 of 30 need "show more"
+    const comment = isLong
+      ? GOOGLE_LONG_LINES[(longIdx++ + offset) % GOOGLE_LONG_LINES.length]!
+      : GOOGLE_LINES[(shortIdx++ + offset * 7) % GOOGLE_LINES.length]!;
+    rows.push({
+      id: newId('rev'),
+      branchId,
+      guestName: GOOGLE_NAMES[(i + offset * 11) % GOOGLE_NAMES.length]!,
+      // All 4–5★: two thirds 5★, one third 4★.
+      rating: (i + offset) % 3 === 1 ? 4 : 5,
+      comment,
+      status: 'published',
+      source: 'google',
+      // Spread over roughly the last 18 months, newest first.
+      createdAt: new Date(Date.now() - (5 + i * 17 + offset * 11) * 86_400_000),
+    });
+  }
+  return rows;
+}
+
 export async function runSeed(opts: { force?: boolean } = {}): Promise<void> {
   const db = await getDb();
 
@@ -1011,6 +1095,15 @@ export async function runSeed(opts: { force?: boolean } = {}): Promise<void> {
       comment: 'Most peaceful hour of our honeymoon. The riverside sala is pure magic.',
       status: 'published',
     },
+  ]);
+
+  /* -------------- Google Maps reviews (shown as imported) -------------- */
+
+  await db.insert(T.reviews).values([
+    ...googleReviewRows(seminyakId, 0),
+    ...googleReviewRows(ubudId, 1),
+    ...googleReviewRows(marinaId, 2),
+    ...googleReviewRows(cangguId, 3),
   ]);
 
   await db.insert(T.pages).values([
