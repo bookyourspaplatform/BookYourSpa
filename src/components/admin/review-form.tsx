@@ -15,10 +15,10 @@ function todayKey(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-/** What each `reviews.source` value says on the public page, beside the date. */
+/** The source options shown beside the date on the Add Review form. */
 const SOURCES = [
   { value: 'platform', label: 'Guest review' },
-  { value: 'google', label: 'Imported from Google Maps' },
+  { value: 'google', label: 'Google Review' },
 ] as const;
 
 /**
