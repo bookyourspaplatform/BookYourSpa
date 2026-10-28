@@ -1,12 +1,14 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Check, Minus, Plus, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { GREEN_BTN } from '@/components/ui/classes';
 import { formatMoney } from '@/lib/money';
 import { cn } from '@/lib/utils';
+import { SPA_TYPES } from '@/db/schema';
+import { SPA_TYPE_LABELS } from '@/lib/catalog';
 
 export type SelectableTreatment = {
   id: string;
@@ -40,6 +42,11 @@ function maxPersonsOf(t: SelectableTreatment, tierIdx: number): number {
  * The spa page's "Treatments & prices" list with the booking wizard's
  * multi-select behaviour: pick any number of treatments (and a duration tier
  * on each), then carry the whole selection into the booking flow.
+ *
+ * Above the list sit category tabs — "All" plus every spa-type the outlet's
+ * treatments carry (Massages, Body Treatment, …) — so a guest can narrow the
+ * list to one kind of treatment. Selected treatments stay selected when the
+ * guest switches tabs.
  */
 export function TreatmentSelectList({
   treatments,
@@ -58,8 +65,20 @@ export function TreatmentSelectList({
   const [picked, setPicked] = useState<Record<string, number>>({});
   // treatmentId -> how many guests share this treatment (default 1).
   const [persons, setPersons] = useState<Record<string, number>>({});
+  // Which category tab is showing — 'all' or one spa-type label.
+  const [tab, setTab] = useState<string>('all');
   const ids = Object.keys(picked);
   const personsOf = (id: string) => persons[id] ?? 1;
+
+  /** Tabs the outlet actually offers, in the same order as the spa-type chips. */
+  const tabs = useMemo(() => {
+    const seen = new Set<string>();
+    for (const t of treatments) for (const label of t.tagLabels) seen.add(label);
+    const order = new Map(SPA_TYPES.map((type, i) => [SPA_TYPE_LABELS[type] ?? type, i]));
+    return [...seen].sort((a, b) => (order.get(a) ?? 99) - (order.get(b) ?? 99) || a.localeCompare(b));
+  }, [treatments]);
+
+  const visible = tab === 'all' ? treatments : treatments.filter((t) => t.tagLabels.includes(tab));
 
   function toggle(id: string) {
     setPicked((cur) => {
@@ -109,8 +128,38 @@ export function TreatmentSelectList({
 
   return (
     <>
-      <div className="mt-4 space-y-4">
-        {treatments.map((t) => {
+      {tabs.length > 0 && (
+        <div className="mt-4 flex flex-wrap gap-2" role="tablist" aria-label="Treatment categories">
+          {[{ key: 'all', label: 'All', count: treatments.length },
+            ...tabs.map((label) => ({
+              key: label,
+              label,
+              count: treatments.filter((t) => t.tagLabels.includes(label)).length,
+            }))].map(({ key, label, count }) => (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              aria-selected={tab === key}
+              onClick={() => setTab(key)}
+              className={cn(
+                'rounded-full px-3.5 py-1.5 text-[13px] font-medium transition',
+                tab === key
+                  ? 'bg-brand-700 text-white shadow-sm'
+                  : 'border border-ink-200 bg-white text-ink-600 hover:border-brand-400 hover:text-brand-800',
+              )}
+            >
+              {label}
+              <span className={cn('ml-1 tabular-nums', tab === key ? 'text-white/70' : 'text-ink-400')}>
+                ({count})
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="mt-3 space-y-4">
+        {visible.map((t) => {
           const chosenIdx = picked[t.id];
           const active = chosenIdx !== undefined;
           const tierIdx = Math.min(chosenIdx ?? 0, t.options.length - 1);
