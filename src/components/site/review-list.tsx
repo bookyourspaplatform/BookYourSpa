@@ -109,7 +109,7 @@ export function ReviewList({ reviews }: { reviews: ReviewItem[] }) {
                 <p className="text-[12.5px] text-ink-400">
                   {formatDate(r.createdAt)} ·{' '}
                   {r.source === 'google' ? (
-                    <span className="font-medium text-ink-500">Imported from Google Maps</span>
+                    <span className="font-medium text-ink-500">Google Review</span>
                   ) : r.bookingId ? (
                     'Verified booking'
                   ) : (
