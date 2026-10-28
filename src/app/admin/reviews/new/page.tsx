@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { notFound } from 'next/navigation';
 import { Star } from 'lucide-react';
 import { getDb } from '@/db';
-import { branches } from '@/db/schema';
+import { branches, reviews } from '@/db/schema';
 import { pageMetadata } from '@/lib/seo';
 import { ReviewForm } from '@/components/admin/review-form';
 
@@ -36,6 +36,10 @@ export default async function NewReviewPage({
       })
     : undefined;
   if (!row) notFound();
+  const branchReviews = await db.query.reviews.findMany({
+    where: eq(reviews.branchId, row.id),
+    orderBy: (table, { desc }) => [desc(table.createdAt)],
+  });
 
   return (
     <div className="space-y-5">
@@ -47,11 +51,17 @@ export default async function NewReviewPage({
         </p>
       </div>
 
-      <ReviewForm branchId={row.id} branchName={row.name} providerName={row.provider.name} />
+      <ReviewForm branchId={row.id} branchName={row.name} providerName={row.provider.name} reviews={branchReviews.map((review) => ({
+        id: review.id,
+        guestName: review.guestName,
+        rating: review.rating,
+        comment: review.comment,
+        source: review.source,
+        createdAt: review.createdAt.toISOString(),
+      }))} />
 
       <p className="text-[12.5px] text-ink-400">
-        Reviews publish straight away and appear 10 at a time on the location page. Suppliers can still
-        hide or delete them from their own Reviews tab.
+        Reviews publish straight away and appear 10 at a time on the location page. Edit or delete an unwanted review below.
       </p>
     </div>
   );

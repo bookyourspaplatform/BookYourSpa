@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { getDb, type AppDb } from '@/db';
 import * as T from '@/db/schema';
 import { hashPassword } from '@/lib/auth/password';
-import { adminAddReview } from '@/lib/actions/admin';
+import { adminAddReview, adminDeleteReview, adminUpdateReview } from '@/lib/actions/admin';
 
 // Server-action environment stubs: no Next.js cache or cookie request in tests.
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
@@ -117,6 +117,42 @@ describe('adminAddReview', () => {
     expect(row!.createdAt.toISOString().slice(0, 10)).toBe('2026-01-15');
   });
 
+  it('lets an admin edit a review and then delete it', async () => {
+    const created = await adminAddReview({
+      branchId: 'brn_ar',
+      guestName: 'Couple Guest',
+      rating: 5,
+      comment: 'We liked the idea of a couple massage at home. The booking process was straightforward, and the private setting made the occasion comfortable.',
+      date: '2026-03-10',
+      source: 'google',
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    const updated = await adminUpdateReview({
+      id: created.data!.id,
+      guestName: 'Couple Guest Edited',
+      rating: 4,
+      comment: '<p>Updated review 👍</p><img src=x onerror=alert(1)>',
+      date: '2026-03-12',
+      source: 'platform',
+    });
+    expect(updated.ok, updated.ok ? '' : updated.error).toBe(true);
+    const row = await db.query.reviews.findFirst({ where: eq(T.reviews.id, created.data!.id) });
+    expect(row?.guestName).toBe('Couple Guest Edited');
+    expect(row?.rating).toBe(4);
+    expect(row?.source).toBe('platform');
+    expect(row?.comment).toContain('Updated review');
+    expect(row?.comment).not.toContain('onerror');
+    expect(row?.createdAt.toISOString().slice(0, 10)).toBe('2026-03-12');
+
+    const deleted = await adminDeleteReview(created.data!.id);
+    expect(deleted.ok).toBe(true);
+    const removed = await db.query.reviews.findFirst({ where: eq(T.reviews.id, created.data!.id) });
+    expect(removed).toBeUndefined();
+    expect((await adminDeleteReview(created.data!.id)).ok).toBe(false);
+  });
+
   it('refuses a future or impossible posted date', async () => {
     const future = await adminAddReview({
       branchId: 'brn_ar',
@@ -135,6 +171,6 @@ describe('adminAddReview', () => {
     expect(impossible.ok).toBe(false);
 
     const rows = await db.query.reviews.findMany({ where: eq(T.reviews.branchId, 'brn_ar') });
-    expect(rows).toHaveLength(2); // only the first two tests wrote rows
+    expect(rows).toHaveLength(2); // add-review and date/source tests wrote rows; edit/delete removed its review
   });
 });

@@ -436,6 +436,92 @@ export async function adminAddReview(input: {
   }
 }
 
+/** Admin updates a review's visible details and posted date for its existing branch. */
+export async function adminUpdateReview(input: {
+  id: string;
+  guestName: string;
+  rating: number;
+  comment?: string | null;
+  date: string;
+  source?: string | null;
+}): Promise<ActionResult> {
+  try {
+    const { user, db } = await adminCtx();
+    const id = String(input?.id ?? '').trim();
+    const guestName = String(input?.guestName ?? '').trim().replace(/\s+/g, ' ');
+    const rating = Number(input?.rating);
+    const date = String(input?.date ?? '').trim();
+    const source = input?.source === 'google' ? 'google' : 'platform';
+    const body = sanitizeRichText(String(input?.comment ?? ''));
+    const comment = stripHtml(body);
+    if (!id) return fail('Review not found.');
+    if (guestName.length < 2 || guestName.length > 60) return fail('Name must be between 2 and 60 characters.');
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) return fail('Star must be between 1 and 5.');
+    if (comment.length > 4000) return fail('Keep the review under 4000 characters.');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return fail('Pick the date the review was posted.');
+    const postedAt = new Date(`${date}T12:00:00Z`);
+    if (Number.isNaN(postedAt.getTime()) || postedAt.toISOString().slice(0, 10) !== date) return fail('Pick a real calendar date.');
+    if (postedAt.getTime() > Date.now() + 36 * 60 * 60 * 1000) return fail('The posted date cannot be in the future.');
+
+    const existing = await db.query.reviews.findFirst({
+      where: eq(reviews.id, id),
+      with: { branch: { with: { provider: true } } },
+    });
+    if (!existing) return fail('Review not found.');
+    await db.update(reviews).set({
+      guestName,
+      rating,
+      comment: comment ? body : null,
+      source,
+      createdAt: postedAt,
+      updatedAt: new Date(),
+    }).where(eq(reviews.id, id));
+    await logAudit({
+      actorId: user.id,
+      actorRole: user.role,
+      action: 'admin.review_updated',
+      entity: 'review',
+      entityId: id,
+      meta: { branchId: existing.branchId, guestName, rating },
+    });
+    revalidatePath('/spas');
+    revalidatePath(`/spas/${existing.branch.provider.slug}/${existing.branch.slug}`);
+    revalidatePath('/admin/reviews/new');
+    return { ok: true };
+  } catch {
+    return fail('Could not update the review.');
+  }
+}
+
+/** Admin permanently removes a review from its branch and public listing. */
+export async function adminDeleteReview(id: string): Promise<ActionResult> {
+  try {
+    const { user, db } = await adminCtx();
+    const reviewId = String(id ?? '').trim();
+    if (!reviewId) return fail('Review not found.');
+    const existing = await db.query.reviews.findFirst({
+      where: eq(reviews.id, reviewId),
+      with: { branch: { with: { provider: true } } },
+    });
+    if (!existing) return fail('Review not found.');
+    await db.delete(reviews).where(eq(reviews.id, reviewId));
+    await logAudit({
+      actorId: user.id,
+      actorRole: user.role,
+      action: 'admin.review_deleted',
+      entity: 'review',
+      entityId: reviewId,
+      meta: { branchId: existing.branchId, guestName: existing.guestName, rating: existing.rating },
+    });
+    revalidatePath('/spas');
+    revalidatePath(`/spas/${existing.branch.provider.slug}/${existing.branch.slug}`);
+    revalidatePath('/admin/reviews/new');
+    return { ok: true };
+  } catch {
+    return fail('Could not delete the review.');
+  }
+}
+
 export async function approveProviderClaim(claimId: string): Promise<ActionResult> {
   try {
     const { user, db } = await adminCtx();
