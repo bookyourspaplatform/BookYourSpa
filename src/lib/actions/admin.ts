@@ -30,7 +30,8 @@ import { treatmentPayload, treatmentSchema } from '@/lib/treatment';
 import { findUserByEmail, requireUser } from '@/lib/auth/session';
 import { cancelBooking, BookingError } from '@/lib/booking';
 import { logAudit } from '@/lib/audit';
-import { newId, slugify } from '@/lib/utils';
+import { newId, slugify, stripHtml } from '@/lib/utils';
+import { sanitizeRichText } from '@/lib/security';
 import { DEFAULT_SETTINGS, type SettingKey } from '@/lib/settings';
 
 export type ActionResult<T = unknown> = { ok: true; data?: T } | { ok: false; error: string };
@@ -356,21 +357,29 @@ export async function adminGetSpa(
 /**
  * Admin DB → spa form → "Add Review": writes one review for a location
  * straight onto its public page — for reviews transcribed by hand (a Google
- * listing, a message from a guest). It publishes immediately, so the badge
- * and the 10-per-page showcase pick it up right away.
+ * listing, a message from a guest). `date` is the posted date shown beside
+ * the review, `source` the label shown next to it, `comment` rich text (it is
+ * sanitized here). It publishes immediately, so the badge and the
+ * 10-per-page showcase pick it up right away.
  */
 export async function adminAddReview(input: {
   branchId: string;
   guestName: string;
   rating: number;
   comment?: string | null;
+  date?: string | null;
+  source?: string | null;
 }): Promise<ActionResult<{ id: string }>> {
   try {
     const { user, db } = await adminCtx();
     const branchId = String(input?.branchId ?? '');
     const guestName = String(input?.guestName ?? '').trim().replace(/\s+/g, ' ');
     const rating = Math.round(Number(input?.rating));
-    const comment = String(input?.comment ?? '').trim();
+    const date = String(input?.date ?? '').trim();
+    const source = input?.source === 'google' ? 'google' : 'platform';
+    // Rich text from the editor: sanitize, then treat an empty body as none.
+    const body = sanitizeRichText(String(input?.comment ?? ''));
+    const comment = stripHtml(body);
     if (!branchId) return fail('Save the location first, then add a review.');
     if (guestName.length < 2 || guestName.length > 60) {
       return fail('Name must be between 2 and 60 characters.');
@@ -378,7 +387,21 @@ export async function adminAddReview(input: {
     if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
       return fail('Star must be between 1 and 5.');
     }
-    if (comment.length > 1000) return fail('Keep the comment under 1000 characters.');
+    if (comment.length > 4000) return fail('Keep the review under 4000 characters.');
+
+    // Posted date: defaults to now, otherwise a real day that is not ahead of us.
+    let postedAt = new Date();
+    if (date) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return fail('Pick the date the review was posted.');
+      const parsed = new Date(`${date}T12:00:00Z`);
+      if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
+        return fail('Pick a real calendar date.');
+      }
+      if (parsed.getTime() > Date.now() + 36 * 60 * 60 * 1000) {
+        return fail('The posted date cannot be in the future.');
+      }
+      postedAt = parsed;
+    }
     const branch = await db.query.branches.findFirst({
       where: eq(branches.id, branchId),
       with: { provider: true },
@@ -391,9 +414,11 @@ export async function adminAddReview(input: {
       branchId,
       guestName,
       rating,
-      comment: comment || null,
+      comment: comment ? body : null,
       status: 'published',
-      source: 'platform',
+      source,
+      createdAt: postedAt,
+      updatedAt: postedAt,
     });
     await logAudit({
       actorId: user.id,

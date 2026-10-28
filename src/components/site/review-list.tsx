@@ -2,7 +2,7 @@
 
 import { useLayoutEffect, useRef, useState } from 'react';
 import { Star } from 'lucide-react';
-import { formatDate } from '@/lib/utils';
+import { formatDate, stripHtml } from '@/lib/utils';
 
 export type ReviewItem = {
   id: string;
@@ -41,20 +41,32 @@ function ReviewComment({ text }: { text: string }) {
   const [expanded, setExpanded] = useState(false);
   const [overflowing, setOverflowing] = useState(false);
   const ref = useRef<HTMLSpanElement>(null);
+  // Collapsed: one plain line. Expanded: the rich body (bold, headings, emoji).
+  const plain = stripHtml(text);
+  const hasMarkup = text !== plain;
 
   // Measure only while collapsed — an expanded comment never clips.
   useLayoutEffect(() => {
     if (expanded) return;
     const el = ref.current;
     if (el) setOverflowing(el.scrollWidth > el.clientWidth + 2);
-  }, [text, expanded]);
+  }, [text, plain, expanded]);
+
+  if (!plain) return null;
 
   return (
     <div className="mt-3 flex items-start gap-2 text-[14px] leading-relaxed text-ink-600">
-      <span ref={ref} className={expanded ? 'min-w-0 break-words' : 'min-w-0 truncate'}>
-        {text}
-      </span>
-      {(overflowing || expanded) && (
+      {expanded ? (
+        <div
+          className="min-w-0 break-words [&_a]:text-brand-700 [&_a]:underline [&_h2]:my-2 [&_h2]:text-base [&_h2]:font-semibold [&_h3]:my-1.5 [&_h3]:font-semibold [&_li]:my-0.5 [&_ol]:my-1.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-1.5 [&_ul]:my-1.5 [&_ul]:list-disc [&_ul]:pl-5"
+          dangerouslySetInnerHTML={{ __html: text }}
+        />
+      ) : (
+        <span ref={ref} className="min-w-0 truncate">
+          {plain}
+        </span>
+      )}
+      {(overflowing || expanded || hasMarkup) && (
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}

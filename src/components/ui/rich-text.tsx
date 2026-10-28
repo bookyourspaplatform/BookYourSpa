@@ -1,7 +1,7 @@
 'use client';
 
-import { useCallback, useRef } from 'react';
-import { Bold, Heading2, Heading3, Italic, Link2, List, RemoveFormatting } from 'lucide-react';
+import { useCallback, useRef, useState } from 'react';
+import { Bold, Heading2, Heading3, Italic, Link2, List, RemoveFormatting, Smile } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const TOOLBAR = [
@@ -14,6 +14,12 @@ const TOOLBAR = [
   { cmd: 'clear', icon: RemoveFormatting, label: 'Clear formatting' },
 ] as const;
 
+/** Emoji offered by the picker when `emoji` is on — plain text, so they pass sanitizing. */
+const EMOJIS = [
+  '😀', '😂', '🥰', '😍', '😊', '😌', '🙏', '👍', '👏', '💪',
+  '⭐', '✨', '💖', '🌸', '🌿', '💆', '🧖', '🎉', '🙌', '👌',
+];
+
 /**
  * Minimal rich-text editor for the spa description. Emits a small, known HTML
  * subset (<p>, <strong>, <em>, headings, lists, <a>) which the server re-sanitizes
@@ -24,13 +30,17 @@ export function RichText({
   onChange,
   placeholder,
   minHeight = 180,
+  emoji = false,
 }: {
   value: string;
   onChange: (html: string) => void;
   placeholder?: string;
   minHeight?: number;
+  /** Adds an emoji picker to the toolbar (reviews, notes). */
+  emoji?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const [showEmoji, setShowEmoji] = useState(false);
 
   // Uncontrolled: seed the DOM once (and re-seed only when the incoming HTML
   // genuinely differs — e.g. a different branch via `key`). Never re-set while
@@ -60,6 +70,15 @@ export function RichText({
     onChange(ref.current?.innerHTML ?? '');
   }
 
+  /** Type the character into the editor at the caret, then report the new HTML. */
+  function insertEmoji(char: string) {
+    const el = ref.current;
+    if (!el) return;
+    el.focus();
+    document.execCommand('insertText', false, char);
+    onChange(el.innerHTML ?? '');
+  }
+
   return (
     <div className="rounded-xl border border-ink-200 bg-white focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-brand-500/15">
       <div className="flex flex-wrap gap-0.5 border-b border-ink-100 px-1.5 py-1.5" role="toolbar" aria-label="Text formatting">
@@ -78,7 +97,39 @@ export function RichText({
             <t.icon className="size-4" />
           </button>
         ))}
+        {emoji && (
+          <button
+            type="button"
+            aria-label="Add emoji"
+            title="Add emoji"
+            aria-expanded={showEmoji}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => setShowEmoji((v) => !v)}
+            className={cn(
+              'rounded-md p-1.5 text-ink-500 transition hover:bg-sand-100 hover:text-ink-800',
+              showEmoji && 'bg-sand-100 text-ink-800',
+            )}
+          >
+            <Smile className="size-4" />
+          </button>
+        )}
       </div>
+      {emoji && showEmoji && (
+        <div className="flex flex-wrap gap-0.5 border-b border-ink-100 px-2 py-2">
+          {EMOJIS.map((ch) => (
+            <button
+              key={ch}
+              type="button"
+              aria-label={`Insert ${ch}`}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => insertEmoji(ch)}
+              className="rounded-md p-1 text-lg leading-none transition hover:bg-sand-100"
+            >
+              {ch}
+            </button>
+          ))}
+        </div>
+      )}
       <div
         contentEditable
         suppressContentEditableWarning

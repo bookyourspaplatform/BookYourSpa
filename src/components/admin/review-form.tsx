@@ -3,15 +3,29 @@
 import { useState, useTransition, type FormEvent } from 'react';
 import { Star } from 'lucide-react';
 import { adminAddReview } from '@/lib/actions/admin';
-import { Field, Input, Textarea } from '@/components/ui/field';
+import { Field, Input, Select } from '@/components/ui/field';
+import { RichText } from '@/components/ui/rich-text';
 import { buttonClasses } from '@/components/ui/button';
 import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 
+/** Today as YYYY-MM-DD in the browser's calendar. */
+function todayKey(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** What each `reviews.source` value says on the public page, beside the date. */
+const SOURCES = [
+  { value: 'platform', label: 'Guest review' },
+  { value: 'google', label: 'Imported from Google Maps' },
+] as const;
+
 /**
  * Admin DB → spa form → "Add Review" (opens in its own window). Writes a
- * single review for the location; it lands on the public page straight away,
- * so the badge and the 10-per-page showcase update with it.
+ * single review for the location: name, stars, the date it is posted, its
+ * source label and a rich-text body with emoji. It lands on the public page
+ * straight away, so the badge and the 10-per-page showcase update with it.
  */
 export function ReviewForm({
   branchId,
@@ -24,6 +38,8 @@ export function ReviewForm({
 }) {
   const [name, setName] = useState('');
   const [rating, setRating] = useState(5);
+  const [date, setDate] = useState(todayKey());
+  const [source, setSource] = useState<(typeof SOURCES)[number]['value']>('platform');
   const [comment, setComment] = useState('');
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
@@ -37,9 +53,17 @@ export function ReviewForm({
       setError('Enter the name the review is from (at least 2 characters).');
       return;
     }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      setError('Pick the date the review was posted.');
+      return;
+    }
+    if (date > todayKey()) {
+      setError('The posted date cannot be in the future.');
+      return;
+    }
     setError('');
     startTransition(async () => {
-      const res = await adminAddReview({ branchId, guestName, rating, comment });
+      const res = await adminAddReview({ branchId, guestName, rating, comment, date, source });
       if (!res.ok) {
         setError(res.error);
         return;
@@ -63,6 +87,8 @@ export function ReviewForm({
               setName('');
               setComment('');
               setRating(5);
+              setDate(todayKey());
+              setSource('platform');
               setSaved(false);
             }}
             className={buttonClasses('outline', 'sm')}
@@ -118,15 +144,42 @@ export function ReviewForm({
           </Field>
         </div>
 
-        <Field label="Review" hint="One line is plenty — leave it empty if you have nothing to add.">
-          {({ id }) => (
-            <Textarea
-              id={id}
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Date posted" required hint="Shown beside the review on the page.">
+            {({ id }) => (
+              <Input
+                id={id}
+                type="date"
+                value={date}
+                max={todayKey()}
+                onChange={(e) => setDate(e.target.value)}
+              />
+            )}
+          </Field>
+          <Field label="Source" hint="Shown beside the date.">
+            {({ id }) => (
+              <Select id={id} value={source} onChange={(e) => setSource(e.target.value as typeof source)}>
+                {SOURCES.map((s) => (
+                  <option key={s.value} value={s.value}>
+                    {s.label}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+        </div>
+
+        <Field
+          label="Review"
+          hint="Rich text with emoji — bold, headings and lists all work. Leave it empty if you have nothing to add."
+        >
+          {() => (
+            <RichText
               value={comment}
-              onChange={(e) => setComment(e.target.value)}
+              onChange={setComment}
               placeholder="Lovely team and a very relaxing treatment."
-              maxLength={1000}
-              rows={3}
+              minHeight={140}
+              emoji
             />
           )}
         </Field>
@@ -141,11 +194,7 @@ export function ReviewForm({
           <p className="text-[12.5px] text-ink-500">
             Goes live on {providerName} → {branchName} immediately.
           </p>
-          <button
-            type="submit"
-            disabled={pending}
-            className={buttonClasses('primary', 'sm')}
-          >
+          <button type="submit" disabled={pending} className={buttonClasses('primary', 'sm')}>
             {pending ? 'Adding…' : 'Add review'}
           </button>
         </div>

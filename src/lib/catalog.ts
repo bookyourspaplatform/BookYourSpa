@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, ilike, inArray, isNull, or, sql } from 'drizzle-orm';
 import type { AppDb } from '@/db';
+import { sanitizeRichText } from '@/lib/security';
 import {
   branches,
   branchTreatments,
@@ -501,7 +502,7 @@ export async function getSpaDetail(db: AppDb, slug: string): Promise<SpaDetail |
     })),
     treatments: treatmentsWithPrices,
     rating,
-    reviews: reviewRows,
+    reviews: reviewRows.map((r) => ({ ...r, comment: r.comment ? sanitizeRichText(r.comment) : null })),
     promos,
     minPrice,
   };
@@ -629,7 +630,9 @@ export async function getBranchDetail(
     promos: await advertisedPlatformPromotions(db, provider.id, promoRows),
     rating,
     googleBadge,
-    reviews: reviewRows,
+    // Rich-text bodies are sanitized on save; re-sanitize on read so no raw
+    // markup can ever reach the public page.
+    reviews: reviewRows.map((r) => ({ ...r, comment: r.comment ? sanitizeRichText(r.comment) : null })),
   };
 }
 

@@ -17,7 +17,7 @@ import {
 } from '@/db/schema';
 import { getCurrentUser } from '@/lib/auth/session';
 import { formatMoney } from '@/lib/money';
-import { formatDateTime } from '@/lib/utils';
+import { formatDateTime, stripHtml } from '@/lib/utils';
 import { pageMetadata } from '@/lib/seo';
 import { Badge, BOOKING_STATUS_TONE, PAYMENT_STATUS_TONE } from '@/components/ui/badge';
 import { TabLinks } from '@/components/ui/tabs';
@@ -421,7 +421,8 @@ async function BranchReviewsTab({ branchId }: { branchId: string }) {
     id: r.id,
     guestName: r.guestName,
     rating: r.rating,
-    comment: r.comment,
+    // Supplier tab reads as plain text — drop the rich-text markup.
+    comment: r.comment ? stripHtml(r.comment) : null,
     status: r.status,
     createdAt: r.createdAt.toISOString(),
   }));

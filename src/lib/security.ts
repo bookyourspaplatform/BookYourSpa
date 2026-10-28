@@ -109,14 +109,8 @@ export function sanitizeRichText(html: string): string {
   return out.trim();
 }
 
-/** Plain-text version of rich text — for meta descriptions and JSON-LD. */
-export function stripHtml(html: string): string {
-  return html
-    .replace(/<[^>]*>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
+/**
+ * Plain-text version of rich text — for meta descriptions and JSON-LD.
+ * Lives in utils (no `next/server` import) so client components can use it too.
+ */
+export { stripHtml } from '@/lib/utils';

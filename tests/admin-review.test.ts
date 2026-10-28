@@ -95,4 +95,46 @@ describe('adminAddReview', () => {
     const rows = await db.query.reviews.findMany({ where: eq(T.reviews.branchId, 'brn_ar') });
     expect(rows).toHaveLength(1); // nothing above got through
   });
+
+  it('keeps the posted date, source label and sanitized rich text', async () => {
+    const res = await adminAddReview({
+      branchId: 'brn_ar',
+      guestName: 'Yuka M.',
+      rating: 4,
+      comment: '<p>Lovely <strong>team</strong> 👍</p><script>alert(1)</script>',
+      date: '2026-01-15',
+      source: 'google',
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+
+    const row = await db.query.reviews.findFirst({ where: eq(T.reviews.id, res.data!.id) });
+    expect(row?.source).toBe('google');
+    expect(row?.comment).toContain('<strong>team</strong>');
+    expect(row?.comment).toContain('👍');
+    expect(row?.comment).not.toContain('<script');
+    // Stored at UTC noon so every timezone still reads the chosen day.
+    expect(row!.createdAt.toISOString().slice(0, 10)).toBe('2026-01-15');
+  });
+
+  it('refuses a future or impossible posted date', async () => {
+    const future = await adminAddReview({
+      branchId: 'brn_ar',
+      guestName: 'Omar K.',
+      rating: 5,
+      date: '2999-01-01',
+    });
+    expect(future.ok).toBe(false);
+
+    const impossible = await adminAddReview({
+      branchId: 'brn_ar',
+      guestName: 'Omar K.',
+      rating: 5,
+      date: '2026-02-31',
+    });
+    expect(impossible.ok).toBe(false);
+
+    const rows = await db.query.reviews.findMany({ where: eq(T.reviews.branchId, 'brn_ar') });
+    expect(rows).toHaveLength(2); // only the first two tests wrote rows
+  });
 });
