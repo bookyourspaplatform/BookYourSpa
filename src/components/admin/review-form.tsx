@@ -1,0 +1,155 @@
+'use client';
+
+import { useState, useTransition, type FormEvent } from 'react';
+import { Star } from 'lucide-react';
+import { adminAddReview } from '@/lib/actions/admin';
+import { Field, Input, Textarea } from '@/components/ui/field';
+import { buttonClasses } from '@/components/ui/button';
+import { useToast } from '@/components/ui/toast';
+import { cn } from '@/lib/utils';
+
+/**
+ * Admin DB → spa form → "Add Review" (opens in its own window). Writes a
+ * single review for the location; it lands on the public page straight away,
+ * so the badge and the 10-per-page showcase update with it.
+ */
+export function ReviewForm({
+  branchId,
+  branchName,
+  providerName,
+}: {
+  branchId: string;
+  branchName: string;
+  providerName: string;
+}) {
+  const [name, setName] = useState('');
+  const [rating, setRating] = useState(5);
+  const [comment, setComment] = useState('');
+  const [error, setError] = useState('');
+  const [saved, setSaved] = useState(false);
+  const [pending, startTransition] = useTransition();
+  const toast = useToast();
+
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    const guestName = name.trim().replace(/\s+/g, ' ');
+    if (guestName.length < 2) {
+      setError('Enter the name the review is from (at least 2 characters).');
+      return;
+    }
+    setError('');
+    startTransition(async () => {
+      const res = await adminAddReview({ branchId, guestName, rating, comment });
+      if (!res.ok) {
+        setError(res.error);
+        return;
+      }
+      setSaved(true);
+      toast.success('Review added', `Published on ${branchName}.`);
+    });
+  }
+
+  if (saved) {
+    return (
+      <section className="rounded-3xl border border-ink-100 bg-white p-5">
+        <p className="text-[15px] font-medium text-ink-800">Review published</p>
+        <p className="mt-1 text-sm text-ink-500">
+          It is live on {branchName} — the page shows 10 reviews at a time, newest first.
+        </p>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setName('');
+              setComment('');
+              setRating(5);
+              setSaved(false);
+            }}
+            className={buttonClasses('outline', 'sm')}
+          >
+            Add another review
+          </button>
+          <button type="button" onClick={() => window.close()} className={buttonClasses('ghost', 'sm')}>
+            Close window
+          </button>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="rounded-3xl border border-ink-100 bg-white p-5">
+      <form onSubmit={submit} className="space-y-4">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Name" required hint="Who the review is from.">
+            {({ id }) => (
+              <Input
+                id={id}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Sarah J."
+                maxLength={60}
+                autoComplete="off"
+              />
+            )}
+          </Field>
+          <Field label="Star" required hint="Whole stars, 1 to 5.">
+            {() => (
+              <div className="flex h-11 items-center gap-1">
+                {[1, 2, 3, 4, 5].map((i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    aria-label={`${i} star${i > 1 ? 's' : ''}`}
+                    aria-pressed={i === rating}
+                    onClick={() => setRating(i)}
+                    className="rounded p-1 transition hover:bg-sand-100"
+                  >
+                    <Star
+                      className={cn(
+                        'size-6',
+                        i <= rating ? 'fill-amber-400 text-amber-400' : 'text-ink-300',
+                      )}
+                    />
+                  </button>
+                ))}
+              </div>
+            )}
+          </Field>
+        </div>
+
+        <Field label="Review" hint="One line is plenty — leave it empty if you have nothing to add.">
+          {({ id }) => (
+            <Textarea
+              id={id}
+              value={comment}
+              onChange={(e) => setComment(e.target.value)}
+              placeholder="Lovely team and a very relaxing treatment."
+              maxLength={1000}
+              rows={3}
+            />
+          )}
+        </Field>
+
+        {error && (
+          <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-[13px] text-rose-700">
+            {error}
+          </p>
+        )}
+
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-[12.5px] text-ink-500">
+            Goes live on {providerName} → {branchName} immediately.
+          </p>
+          <button
+            type="submit"
+            disabled={pending}
+            className={buttonClasses('primary', 'sm')}
+          >
+            {pending ? 'Adding…' : 'Add review'}
+          </button>
+        </div>
+      </form>
+    </section>
+  );
+}

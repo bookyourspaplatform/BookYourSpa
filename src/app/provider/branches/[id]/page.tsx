@@ -84,6 +84,8 @@ export default async function BranchDetailPage({
     email: branch.email,
     website: branch.website,
     googleMapsUrl: branch.googleMapsUrl,
+    googleRating: branch.googleRating,
+    googleRatingCount: branch.googleRatingCount,
     lat: branch.lat,
     lng: branch.lng,
     tagline: branch.tagline,

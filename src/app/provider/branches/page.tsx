@@ -49,6 +49,8 @@ export default async function ProviderBranchesPage() {
     email: b.email,
     website: b.website,
     googleMapsUrl: b.googleMapsUrl,
+    googleRating: b.googleRating,
+    googleRatingCount: b.googleRatingCount,
     lat: b.lat,
     lng: b.lng,
     tagline: b.tagline,

@@ -524,6 +524,8 @@ export type BranchDetail = {
   promos: Promotion[];
   /** Published review aggregate for this outlet. */
   rating: { avg: number; count: number } | null;
+  /** Google listing badge typed by the admin under "Import from Google Maps". */
+  googleBadge: { avg: number; count: number | null } | null;
   /** Recent published reviews for this outlet (the page showcases 10 at a time). */
   reviews: {
     id: string;
@@ -604,6 +606,16 @@ export async function getBranchDetail(
       ? { avg: Math.round(Number(ratingAgg.avg) * 10) / 10, count: ratingAgg.count }
       : null;
 
+  // Google listing numbers (★ 4.8 (9,062)) take over the badge when the
+  // admin typed them; otherwise the published review average shows instead.
+  const googleBadge =
+    branch.googleRating != null && branch.googleRating >= 1 && branch.googleRating <= 5
+      ? {
+          avg: Math.round(branch.googleRating * 10) / 10,
+          count: branch.googleRatingCount != null && branch.googleRatingCount > 0 ? branch.googleRatingCount : null,
+        }
+      : null;
+
   return {
     branch: { ...branch, provider },
     featured:
@@ -616,6 +628,7 @@ export async function getBranchDetail(
     therapistList: therapistRows,
     promos: await advertisedPlatformPromotions(db, provider.id, promoRows),
     rating,
+    googleBadge,
     reviews: reviewRows,
   };
 }

@@ -6,6 +6,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  real,
   smallint,
   text,
   timestamp,
@@ -318,6 +319,9 @@ export const branches = pgTable(
     images: text('images').array().notNull().default(sql`'{}'::text[]`),
     /** Google Maps share/place link — the import source for lat/lng and details. */
     googleMapsUrl: text('google_maps_url'),
+    /** Google listing badge entered by the admin under "Import from Google Maps". */
+    googleRating: real('google_rating'),
+    googleRatingCount: integer('google_rating_count'),
     /** CTA / branding words shown on the spa card. */
     tagline: text('tagline'),
     /** Up to 160 chars — doubles as the SEO description for the branch page. */

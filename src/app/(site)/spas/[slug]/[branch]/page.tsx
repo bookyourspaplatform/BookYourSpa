@@ -121,7 +121,7 @@ export default async function BranchDetailPage({
   if (!detail) notFound();
 
   const b = detail.branch;
-  const { treatments, therapistList, promos, rating, reviews } = detail;
+  const { treatments, therapistList, promos, rating, googleBadge, reviews } = detail;
   const base = await appUrl('');
   const url = `${base}/spas/${slug}/${branch}`;
 
@@ -315,39 +315,39 @@ export default async function BranchDetailPage({
               )}
 
               <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[14.5px]">
-                {rating ? (
-                  <>
-                    <span className="flex items-center gap-1.5">
-                      <Stars value={rating.avg} />
-                      <span className="font-semibold text-ink-800">{rating.avg.toFixed(1)}</span>
-                      <a
-                        href="#reviews"
-                        className="text-ink-500 underline-offset-2 hover:text-brand-700 hover:underline"
-                      >
-                        ({rating.count} reviews)
-                      </a>
-                    </span>
-                    {minPrice !== null && (
-                      <span className="text-ink-500">
-                        From{' '}
-                        <span className="font-semibold text-ink-800">
-                          {formatMoney(minPrice, b.currency)}
-                        </span>
-                      </span>
+                {googleBadge ? (
+                  /* Google-style listing badge: ★★★★★ 4.8 (9,062) */
+                  <span
+                    className="flex items-center gap-1.5"
+                    title="Rating shown on this spa's Google listing"
+                  >
+                    <Stars value={googleBadge.avg} />
+                    <span className="font-semibold text-ink-800">{googleBadge.avg.toFixed(1)}</span>
+                    {googleBadge.count != null && (
+                      <span className="text-ink-500">({googleBadge.count.toLocaleString('en-US')})</span>
                     )}
-                  </>
+                  </span>
+                ) : rating ? (
+                  <span className="flex items-center gap-1.5">
+                    <Stars value={rating.avg} />
+                    <span className="font-semibold text-ink-800">{rating.avg.toFixed(1)}</span>
+                    <a
+                      href="#reviews"
+                      className="text-ink-500 underline-offset-2 hover:text-brand-700 hover:underline"
+                    >
+                      ({rating.count} reviews)
+                    </a>
+                  </span>
                 ) : (
-                  <>
-                    <span className="text-ink-400">New · no reviews yet</span>
-                    {minPrice !== null && (
-                      <span className="text-ink-500">
-                        From{' '}
-                        <span className="font-semibold text-ink-800">
-                          {formatMoney(minPrice, b.currency)}
-                        </span>
-                      </span>
-                    )}
-                  </>
+                  <span className="text-ink-400">New · no reviews yet</span>
+                )}
+                {minPrice !== null && (
+                  <span className="text-ink-500">
+                    From{' '}
+                    <span className="font-semibold text-ink-800">
+                      {formatMoney(minPrice, b.currency)}
+                    </span>
+                  </span>
                 )}
               </div>
             </header>

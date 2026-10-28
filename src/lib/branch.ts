@@ -34,6 +34,9 @@ export const branchSchema = z.object({
   website: z.union([z.string().url().max(240), z.literal('')]).optional().nullable(),
   description: z.string().max(60000).optional().nullable(),
   googleMapsUrl: z.union([z.string().url().max(500), z.literal('')]).optional().nullable(),
+  /** Admin-entered Google listing badge (form under "Import from Google Maps"). */
+  googleRating: z.string().max(8).optional().nullable(),
+  googleRatingCount: z.string().max(12).optional().nullable(),
   lat: z.string().max(40).optional().nullable(),
   lng: z.string().max(40).optional().nullable(),
   tagline: z.string().max(140).optional().nullable(),
@@ -81,6 +84,22 @@ function cleanCoord(value: string | null | undefined): string | null {
   return /^-?\d{1,3}(\.\d+)?$/.test(v) ? v : null;
 }
 
+/** "4.9" / "4,9" → 4.9; anything outside 1–5 is dropped rather than saved. */
+function cleanGoogleRating(value: string | null | undefined): number | null {
+  const v = value?.trim().replace(',', '.');
+  if (!v) return null;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 1 && n <= 5 ? Math.round(n * 10) / 10 : null;
+}
+
+/** "9,062" → 9062; non-numeric junk is dropped rather than saved. */
+function cleanGoogleCount(value: string | null | undefined): number | null {
+  const v = value?.replace(/[^0-9]/g, '');
+  if (!v) return null;
+  const n = Number(v);
+  return Number.isInteger(n) && n >= 0 && n <= 1_000_000_000 ? n : null;
+}
+
 /**
  * Empty strings → null, rich text sanitized, only renderable image sources kept.
  * Shared by the provider saveBranch and the admin adminSaveSpa actions so both
@@ -95,6 +114,8 @@ export function branchPayload(data: Omit<BranchSaveInput, 'id'>) {
     googleMapsUrl: data.googleMapsUrl || null,
     lat: cleanCoord(data.lat),
     lng: cleanCoord(data.lng),
+    googleRating: cleanGoogleRating(data.googleRating),
+    googleRatingCount: cleanGoogleCount(data.googleRatingCount),
     tagline: data.tagline || null,
     shortDescription: data.shortDescription || null,
     images: data.images.filter((s) => /^https?:\/\//i.test(s) || /^data:image\//i.test(s)).slice(0, 10),

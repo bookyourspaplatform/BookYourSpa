@@ -30,7 +30,6 @@ import { treatmentPayload, treatmentSchema } from '@/lib/treatment';
 import { findUserByEmail, requireUser } from '@/lib/auth/session';
 import { cancelBooking, BookingError } from '@/lib/booking';
 import { logAudit } from '@/lib/audit';
-import { generateGoogleReviews } from '@/db/seed';
 import { newId, slugify } from '@/lib/utils';
 import { DEFAULT_SETTINGS, type SettingKey } from '@/lib/settings';
 
@@ -239,6 +238,8 @@ export type AdminSpaBranch = {
   email: string | null;
   website: string | null;
   googleMapsUrl: string | null;
+  googleRating: number | null;
+  googleRatingCount: number | null;
   lat: string | null;
   lng: string | null;
   tagline: string | null;
@@ -308,6 +309,8 @@ export async function adminGetSpa(
       email: b.email,
       website: b.website,
       googleMapsUrl: b.googleMapsUrl,
+      googleRating: b.googleRating,
+      googleRatingCount: b.googleRatingCount,
       lat: b.lat,
       lng: b.lng,
       tagline: b.tagline,
@@ -351,51 +354,60 @@ export async function adminGetSpa(
 }
 
 /**
- * Admin DB → Providers → spa form: generate Google-imported reviews for a
- * branch, so seeding a newly added listing never needs a manual request.
- * `count` sets how many reviews, `star` the average they add up to (4.8 with
- * 30 reviews → 24×5★ + 6×4★). `replace` swaps out the previously imported
- * set; platform/booking reviews are never touched.
+ * Admin DB → spa form → "Add Review": writes one review for a location
+ * straight onto its public page — for reviews transcribed by hand (a Google
+ * listing, a message from a guest). It publishes immediately, so the badge
+ * and the 10-per-page showcase pick it up right away.
  */
-export async function adminGenerateReviews(input: {
+export async function adminAddReview(input: {
   branchId: string;
-  count: number;
-  star: number;
-  replace: boolean;
-}): Promise<ActionResult<{ generated: number; avg: number; count: number }>> {
+  guestName: string;
+  rating: number;
+  comment?: string | null;
+}): Promise<ActionResult<{ id: string }>> {
   try {
     const { user, db } = await adminCtx();
     const branchId = String(input?.branchId ?? '');
-    const count = Math.round(Number(input?.count));
-    const star = Number(input?.star);
-    if (!branchId) return fail('Save the location first, then generate its reviews.');
-    if (!Number.isFinite(count) || count < 1 || count > 200) {
-      return fail('Number of reviews must be between 1 and 200.');
+    const guestName = String(input?.guestName ?? '').trim().replace(/\s+/g, ' ');
+    const rating = Math.round(Number(input?.rating));
+    const comment = String(input?.comment ?? '').trim();
+    if (!branchId) return fail('Save the location first, then add a review.');
+    if (guestName.length < 2 || guestName.length > 60) {
+      return fail('Name must be between 2 and 60 characters.');
     }
-    if (!Number.isFinite(star) || star < 1 || star > 5) {
-      return fail('Average star must be between 1 and 5.');
+    if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
+      return fail('Star must be between 1 and 5.');
     }
-    const branch = await db.query.branches.findFirst({ where: eq(branches.id, branchId) });
+    if (comment.length > 1000) return fail('Keep the comment under 1000 characters.');
+    const branch = await db.query.branches.findFirst({
+      where: eq(branches.id, branchId),
+      with: { provider: true },
+    });
     if (!branch) return fail('Location not found.');
 
-    if (input.replace) {
-      await db.delete(reviews).where(and(eq(reviews.branchId, branchId), eq(reviews.source, 'google')));
-    }
-    const rows = generateGoogleReviews(branchId, { count, star });
-    await db.insert(reviews).values(rows);
-    const avg = Math.round((rows.reduce((n, r) => n + Number(r.rating), 0) / rows.length) * 10) / 10;
+    const id = newId('rev');
+    await db.insert(reviews).values({
+      id,
+      branchId,
+      guestName,
+      rating,
+      comment: comment || null,
+      status: 'published',
+      source: 'platform',
+    });
     await logAudit({
       actorId: user.id,
       actorRole: user.role,
-      action: 'admin.generate_reviews',
+      action: 'admin.add_review',
       entity: 'branch',
       entityId: branchId,
-      meta: { count: rows.length, star, replace: !!input.replace },
+      meta: { guestName, rating },
     });
     revalidatePath('/spas');
-    return { ok: true, data: { generated: rows.length, avg, count } };
+    revalidatePath(`/spas/${branch.provider.slug}/${branch.slug}`);
+    return { ok: true, data: { id } };
   } catch {
-    return fail('Could not generate reviews.');
+    return fail('Could not add the review.');
   }
 }
 

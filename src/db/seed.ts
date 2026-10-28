@@ -126,7 +126,7 @@ export function googleReviewRows(branchId: string, offset: number): (typeof T.re
  * Generate any number of Google-imported reviews whose average lands on the
  * requested star: ratings split between ceil(star) and the star below and are
  * spaced evenly across the list — e.g. 30 reviews at 4.8 → 24×5★ + 6×4★.
- * Used by the admin "Generate reviews" button on the spa form.
+ * Used when a listing is seeded so new spas are not empty.
  */
 export function generateGoogleReviews(
   branchId: string,
