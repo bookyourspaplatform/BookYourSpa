@@ -76,8 +76,8 @@ export default async function HomePage() {
 	const allSpas = spas.items;
 	const featured = allSpas.filter((s) => s.featured).slice(0, 6);
 	const topRated = [...allSpas]
-		.filter((s) => s.rating && s.rating.count > 0)
-		.sort((a, b) => b.rating!.avg - a.rating!.avg || b.rating!.count - a.rating!.count)
+		.filter((s) => s.rating)
+		.sort((a, b) => b.rating!.avg - a.rating!.avg || (b.rating!.count ?? 0) - (a.rating!.count ?? 0))
 		.slice(0, 4);
 
 	// Hero stats — real platform numbers where they exist.

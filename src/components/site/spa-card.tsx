@@ -39,12 +39,12 @@ export function priceLevel(minPrice: number | null, currency: string): string {
   return expensive ? '$$$' : mid ? '$$' : '$';
 }
 
-export function StarRating({ avg, count }: { avg: number; count: number }) {
+export function StarRating({ avg, count }: { avg: number; count: number | null }) {
   return (
     <span className="inline-flex items-center gap-1 text-[13px]">
       <Star className="size-3.5 fill-amber-400 text-amber-400" />
       <span className="font-semibold text-ink-800">{avg.toFixed(1)}</span>
-      <span className="text-ink-400">({count})</span>
+      {count != null && <span className="text-ink-400">({count})</span>}
     </span>
   );
 }

@@ -40,8 +40,12 @@ export type SpaListItem = {
   featured: boolean;
   /** Supplier name — search haystack only, never displayed publicly. */
   providerName: string;
-  /** Published review average for this outlet (null when unrated). */
-  rating: { avg: number; count: number } | null;
+  /**
+   * The badge this outlet's card shows — Google listing numbers when the
+   * admin typed them, otherwise the published review average. Same
+   * precedence as the branch page so card and page never disagree.
+   */
+  rating: { avg: number; count: number | null } | null;
   /** Kilometres to this outlet — only set when `near` filtering was used. */
   distanceKm: number | null;
   minPrice: number | null;
@@ -175,6 +179,8 @@ type ProviderRow = Provider & {
     | 'images'
     | 'lat'
     | 'lng'
+    | 'googleRating'
+    | 'googleRatingCount'
   >[];
 };
 
@@ -198,6 +204,8 @@ export async function listSpas(db: AppDb, filters: SpaFilters = {}) {
           images: true,
           lat: true,
           lng: true,
+          googleRating: true,
+          googleRatingCount: true,
         },
         where: eq(branches.status, 'active'),
       },
@@ -232,6 +240,15 @@ export async function listSpas(db: AppDb, filters: SpaFilters = {}) {
     ratingRows.map((r) => [r.branchId, { avg: Math.round(Number(r.avg) * 10) / 10, count: r.count }]),
   );
 
+  /** Card badge: Google listing first, then the published review average. */
+  const badgeFor = (branchId: string, googleRating: number | null, googleCount: number | null) =>
+    googleRating != null && googleRating >= 1 && googleRating <= 5
+      ? {
+          avg: Math.round(googleRating * 10) / 10,
+          count: googleCount != null && googleCount > 0 ? googleCount : null,
+        }
+      : (ratingByBranch.get(branchId) ?? null);
+
   const aggByBranch = new Map<string, { minPrice: number | null; categories: string[] }>(
     aggRows.map((r) => [
       r.branchId,
@@ -260,7 +277,7 @@ export async function listSpas(db: AppDb, filters: SpaFilters = {}) {
         currency: b.currency,
         featured: p.featured || (p.featuredUntil ? p.featuredUntil.getTime() > Date.now() : false),
         providerName: p.name,
-        rating: ratingByBranch.get(b.id) ?? null,
+        rating: badgeFor(b.id, b.googleRating, b.googleRatingCount),
         distanceKm: null,
         minPrice: agg?.minPrice ?? null,
         categories: agg?.categories ?? [],
