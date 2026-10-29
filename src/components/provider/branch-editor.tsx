@@ -436,7 +436,7 @@ export function BranchEditor({
         }));
       }
       toast.success(
-        d.source === 'places' ? 'Imported from Google Maps' : 'Location imported from Google Maps',
+        d.source === 'places' ? 'Google Review' : 'Google Review',
         filled.length ? `Filled: ${filled.join(', ')}. Review the details below.` : 'Coordinates set — fill the details below.',
       );
     });
