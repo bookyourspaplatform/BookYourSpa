@@ -119,6 +119,7 @@ export const SPA_CATEGORIES = [
   'wellness_center',
   'beauty_spa',
   'medical_spa',
+  'sensual_wellness',
 ] as const;
 export type SpaCategory = (typeof SPA_CATEGORIES)[number];
 
