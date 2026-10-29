@@ -88,9 +88,7 @@ export default async function DealsPage() {
                             {p.discountType === 'percent' ? `${p.discountValue / 100}% off` : `${p.discountValue} off`}
                           </span>
                         )}
-                        <span className="text-[12px] text-ink-500">
-                          {p.startsAt && p.startsAt > new Date() ? 'Starts ' : ''}Registered members only
-                        </span>
+                        <span className="text-[12px] text-ink-500">Registered members only</span>
                       </div>
                     )}
                     <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[13px]">
