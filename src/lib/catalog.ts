@@ -10,7 +10,6 @@ import {
   reviews,
   therapists,
   treatments,
-  coupons,
   type Branch,
   type Promotion,
   type Provider,
@@ -107,6 +106,7 @@ export const SPA_CATEGORY_LABELS: Record<string, string> = {
   wellness_center: 'Wellness Center',
   beauty_spa: 'Beauty Spa',
   medical_spa: 'Medical Spa',
+  sensual_wellness: 'Sensual Wellness',
 };
 
 export const SPA_TYPE_LABELS: Record<string, string> = {
@@ -753,18 +753,11 @@ export async function listPromotions(
   opts: { position?: Promotion['position']; limit?: number } = {},
 ): Promise<Promotion[]> {
   const rows = await db.query.promotions.findMany({
-    where: sql`${promotions.active} = true AND (${promotions.startsAt} IS NULL OR ${promotions.startsAt} <= now()) AND (${promotions.endsAt} IS NULL OR ${promotions.endsAt} >= now())${opts.position ? sql`AND ${promotions.position} = ${opts.position}` : sql``}`,
+    // Scheduled (future-start) promotions are listed too, with their start date
+    // shown, so admin, supplier and public views always agree on what exists.
+    where: sql`${promotions.active} = true AND (${promotions.endsAt} IS NULL OR ${promotions.endsAt} >= now())${opts.position ? sql`AND ${promotions.position} = ${opts.position}` : sql``}`,
     orderBy: [asc(promotions.sortOrder), desc(promotions.createdAt)],
     limit: opts.limit ?? 10,
-  });
-  return rows;
-}
-
-export async function listPublicCoupons(db: AppDb): Promise<(typeof coupons.$inferSelect)[]> {
-  const rows = await db.query.coupons.findMany({
-    where: sql`${coupons.active} = true AND (${coupons.startsAt} IS NULL OR ${coupons.startsAt} <= now()) AND (${coupons.endsAt} IS NULL OR ${coupons.endsAt} >= now()) AND (${coupons.maxUses} IS NULL OR ${coupons.maxUses} = 0 OR ${coupons.usedCount} < ${coupons.maxUses})`,
-    orderBy: [desc(coupons.startsAt)],
-    limit: 12,
   });
   return rows;
 }

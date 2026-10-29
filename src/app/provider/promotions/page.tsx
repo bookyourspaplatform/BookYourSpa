@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { and, asc, desc, eq, gte, inArray, isNull, lte, or } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNull, or } from 'drizzle-orm';
 import { Megaphone, Sparkles } from 'lucide-react';
 import { getDb } from '@/db';
 import { branchTreatments, branches, promotions, providerPromotions, treatments } from '@/db/schema';
@@ -37,12 +37,13 @@ export default async function ProviderPromotionsPage() {
 
   const [generalRows, choiceRows, treatmentRows, linkRows] = await Promise.all([
     db.query.promotions.findMany({
+      // Scheduled (future-start) offers are listed too, so the supplier sees the
+      // same four promotions the admin created and can activate them early.
       where: and(
         isNull(promotions.providerId),
         isNull(promotions.branchId),
         eq(promotions.active, true),
         or(isNull(promotions.endsAt), gte(promotions.endsAt, now)),
-        or(isNull(promotions.startsAt), lte(promotions.startsAt, now)),
       ),
       orderBy: [asc(promotions.sortOrder), desc(promotions.createdAt)],
     }),

@@ -7,7 +7,6 @@ import {
 	listCities,
 	listFeaturedTreatments,
 	listPromotions,
-	listPublicCoupons,
 	listSpaTypeCounts,
 	listSpas,
 } from '@/lib/catalog';
@@ -16,6 +15,7 @@ import { organizationJsonLd, webSiteJsonLd, appUrl } from '@/lib/seo';
 import { t } from '@/lib/i18n';
 import { getLang } from '@/lib/lang-cookie';
 import { formatDisplayMoney } from '@/lib/display-currency';
+import { formatDate } from '@/lib/utils';
 import { getDisplayCurrency } from '@/lib/currency-cookie';
 import { JsonLd } from '@/components/json-ld';
 import { SearchHero, type HeroStat } from '@/components/site/search-hero';
@@ -59,13 +59,12 @@ const CITY_IMAGES: Record<string, string> = {
 
 export default async function HomePage() {
 	const db = await getDb();
-	const [cities, spaTypes, spas, promos, coupons, settings, lang, display, treatments] =
+	const [cities, spaTypes, spas, promos, settings, lang, display, treatments] =
 		await Promise.all([
 			listCities(db),
 			listSpaTypeCounts(db),
 			listSpas(db, { pageSize: 48 }),
 			listPromotions(db, { limit: 6 }),
-			listPublicCoupons(db),
 			getSettings(),
 			getLang(),
 			getDisplayCurrency(),
@@ -99,11 +98,20 @@ export default async function HomePage() {
 		{ icon: 'shield', value: '100%', label: t(lang, 'stats.reviews') },
 	];
 
-	// Welcome-offer banner from the first active global coupon.
-	const welcome = coupons.find((c) => c.discountType === 'percent') ?? coupons[0] ?? null;
-	const welcomePct = welcome && welcome.discountType === 'percent' ? welcome.discountValue / 100 : 10;
+	// Welcome-offer banner: the admin's "hero" promotion — same code it shows
+	// in Promotions & banners, so the banner never quotes a different code.
+	const now = new Date();
+	const active = (p: (typeof promos)[number]) =>
+		(!p.startsAt || p.startsAt <= now) && (!p.endsAt || p.endsAt >= now);
+	const welcome = promos.find((p) => p.position === 'hero' && active(p)) ?? null;
+	const welcomePct =
+		welcome && welcome.discountType === 'percent' && welcome.discountValue != null
+			? welcome.discountValue / 100
+			: 10;
 
-	// Offer slideshow slides from deal/banner promos.
+	// Offer slideshow slides from deal/banner promos — each carries its own code.
+	// Scheduled (future-start) offers are included too, flagged with their start
+	// date, so home always shows the same four promotions admin created.
 	const offerSlides: OfferSlide[] = promos
 		.filter((p) => p.position === 'deal' || p.position === 'banner')
 		.slice(0, 5)
@@ -114,8 +122,12 @@ export default async function HomePage() {
 			summary: p.summary,
 			linkUrl: p.linkUrl ?? '/deals',
 			linkLabel: 'View',
-			code: coupons[i]?.code ?? coupons[0]?.code ?? null,
+			code: p.code,
 			codeHint: 'Tap to copy',
+			note:
+				p.startsAt && p.startsAt > now
+					? `Starts ${formatDate(p.startsAt, undefined, { dateStyle: 'medium' })}`
+					: null,
 		}));
 
 	const topCategories = spaTypes.slice(0, 10);
@@ -490,12 +502,16 @@ export default async function HomePage() {
 					</div>
 				</div>
 
-				{coupons.length > 0 && (
+				{welcome && (
 					<p className="mt-8 text-center text-sm text-ink-500">
-						New here? Use code <CopyCode code={coupons[0]!.code} /> for{' '}
-						{coupons[0]!.discountType === 'percent'
-							? `${coupons[0]!.discountValue / 100}% off`
-							: formatDisplayMoney(coupons[0]!.discountValue, coupons[0]!.currency ?? 'IDR', display)}{' '}
+						New here? Use code <CopyCode code={welcome.code} /> for{' '}
+						{welcome.discountType === 'percent' && welcome.discountValue != null
+							? `${welcome.discountValue / 100}% off`
+							: formatDisplayMoney(
+									welcome.discountValue ?? 0,
+									welcome.currency ?? 'IDR',
+									display,
+								)}{' '}
 						your first booking.
 					</p>
 				)}

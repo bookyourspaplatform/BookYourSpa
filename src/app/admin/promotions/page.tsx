@@ -1,30 +1,30 @@
 import type { Metadata } from 'next';
 import { asc, desc } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { coupons, promotions } from '@/db/schema';
+import { promotions } from '@/db/schema';
 import { pageMetadata } from '@/lib/seo';
-import { PromotionsManager, CouponsManager } from '@/components/admin/promotions-manager';
+import { PromotionsManager } from '@/components/admin/promotions-manager';
 
 export const dynamic = 'force-dynamic';
 
 export async function generateMetadata(): Promise<Metadata> {
-  return pageMetadata({ title: 'Promotions', description: 'Promotions and promo codes.', path: '/admin/promotions', noIndex: true });
+  return pageMetadata({ title: 'Promotions', description: 'Promotions and banners.', path: '/admin/promotions', noIndex: true });
 }
 
 export default async function AdminPromotionsPage() {
   const db = await getDb();
 
-  const [promoRows, couponRows] = await Promise.all([
-    db.query.promotions.findMany({ orderBy: [asc(promotions.sortOrder), desc(promotions.createdAt)] }),
-    db.query.coupons.findMany({ orderBy: [asc(coupons.code)] }),
-  ]);
+  const promoRows = await db.query.promotions.findMany({
+    orderBy: [asc(promotions.sortOrder), desc(promotions.createdAt)],
+  });
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-xl sm:text-2xl">Promotions</h1>
         <p className="mt-0.5 text-sm text-ink-500">
-          Seasonal campaigns appear across home and deals; promo codes apply at checkout.
+          Every promotion carries its own code — it shows on home, deals and the supplier dashboard from
+          one place.
         </p>
       </div>
 
@@ -52,26 +52,10 @@ export default async function AdminPromotionsPage() {
         }))}
       />
 
-      <CouponsManager
-        coupons={couponRows.map((c) => ({
-          id: c.id,
-          code: c.code,
-          description: c.description,
-          discountType: c.discountType,
-          discountValue: c.discountValue,
-          currency: c.currency,
-          minAmount: c.minAmount,
-          maxUses: c.maxUses ?? 0,
-          usedCount: c.usedCount,
-          startsAt: c.startsAt?.toISOString() ?? null,
-          endsAt: c.endsAt?.toISOString() ?? null,
-          validFromHour: c.validFromHour,
-          validUntilHour: c.validUntilHour,
-          active: c.active,
-        }))}
-      />
-
-      <p className="text-[12.5px] text-ink-400">Promotions marked “active” with a valid window show automatically on /deals.</p>
+      <p className="text-[12.5px] text-ink-400">
+        Promotions marked “active” with a valid window show automatically on home, /deals and the supplier
+        dashboard.
+      </p>
     </div>
   );
 }

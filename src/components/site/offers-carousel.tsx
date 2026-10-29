@@ -15,6 +15,8 @@ export type OfferSlide = {
   linkLabel: string;
   code: string | null;
   codeHint: string;
+  /** e.g. "Starts 1 Dec 2026" — shown for promotions not valid yet. */
+  note?: string | null;
 };
 
 /**
@@ -94,6 +96,11 @@ export function OffersCarousel({
               <div className="mt-4">
                 <CopyCode code={slide.code} />
               </div>
+              {slide.note && (
+                <p className="mt-3 rounded-lg bg-amber-400/15 px-2 py-1 text-[12px] font-medium text-amber-200">
+                  {slide.note}
+                </p>
+              )}
             </div>
           )}
         </div>
