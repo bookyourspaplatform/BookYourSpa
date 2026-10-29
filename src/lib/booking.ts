@@ -18,7 +18,7 @@ import {
   type Booking,
   type DiscountType,
 } from '@/db/schema';
-import { getSettings } from '@/lib/settings';
+import { getSettings, percentToBps, platformGatewayEnabled } from '@/lib/settings';
 import {
   couponApplies,
   pickPriceOption,
@@ -497,13 +497,17 @@ export async function quoteBooking(db: AppDb, input: QuoteInput): Promise<Quote>
     discountBearer: discount?.bearer,
     platformBps,
     agent: agentTerms,
+    bookingFeeBps: percentToBps(settings['booking.feePercent']),
+    depositBps: percentToBps(settings['booking.depositPercent']),
   });
 
+  // Branch offer list ∩ admin's platform-wide gateway switches.
+  const methods = branch.paymentMethods.filter((m) => platformGatewayEnabled(m, settings));
   const online =
     branch.onlinePaymentEnabled &&
     settings['features.onlinePayments'] &&
-    branch.paymentMethods.some((m) => m !== 'venue');
-  const venue = branch.paymentMethods.includes('venue');
+    methods.some((m) => m !== 'venue');
+  const venue = methods.includes('venue');
 
   return {
     branch: {
@@ -533,7 +537,7 @@ export async function quoteBooking(db: AppDb, input: QuoteInput): Promise<Quote>
     pricing,
     couponCode: discount?.code ?? null,
     agentTerms,
-    payment: { online, venue, methods: branch.paymentMethods },
+    payment: { online, venue, methods },
   };
 }
 
@@ -951,13 +955,17 @@ export async function quoteCart(db: AppDb, input: {
     discountBearer: discount?.bearer,
     platformBps,
     agent: agentTerms,
+    bookingFeeBps: percentToBps(settings['booking.feePercent']),
+    depositBps: percentToBps(settings['booking.depositPercent']),
   });
 
+  // Branch offer list ∩ admin's platform-wide gateway switches.
+  const methods = branch.paymentMethods.filter((m) => platformGatewayEnabled(m, settings));
   const online =
     branch.onlinePaymentEnabled &&
     settings['features.onlinePayments'] &&
-    branch.paymentMethods.some((m) => m !== 'venue');
-  const venue = branch.paymentMethods.includes('venue');
+    methods.some((m) => m !== 'venue');
+  const venue = methods.includes('venue');
 
   return {
     branch: {
@@ -984,7 +992,7 @@ export async function quoteCart(db: AppDb, input: {
     pricing,
     couponCode: discount?.code ?? null,
     agentTerms,
-    payment: { online, venue, methods: branch.paymentMethods },
+    payment: { online, venue, methods },
   };
 }
 
@@ -1207,7 +1215,8 @@ export async function createBookingGroup(
     if (quote.couponCode) await redeemCode(tx, quote.couponCode);
 
     /* 5. One row per therapist seat — a couples line becomes two rows. */
-    const { discountAmount: D, platformFee: F, agentCommission: A, total: grandTotal } = quote.pricing;
+    const { discountAmount: D, platformFee: F, agentCommission: A, total: grandTotal, bookingFee: BF } =
+      quote.pricing;
     /** Split `amount` into `n` parts that sum back to `amount` exactly. */
     const splitAmount = (amount: number, n: number): number[] =>
       Array.from(
@@ -1244,7 +1253,13 @@ export async function createBookingGroup(
     const rowList = specs.map((s, i) => s.list + (i === 0 ? quote.productsTotal : 0));
     const rowDiscount = rowList.map((l) => (quote.listPrice > 0 ? Math.floor((D * l) / quote.listPrice) : 0));
     rowDiscount[0] = (rowDiscount[0] ?? 0) + (D - rowDiscount.reduce((s, d) => s + d, 0));
-    const rowTotals = rowList.map((l, i) => l - rowDiscount[i]!);
+    const rowTotalsBeforeFee = rowList.map((l, i) => l - rowDiscount[i]!);
+    // The booking fee rides on top of the subtotal and is spread the same way,
+    // so the rows' totalAmount still sums exactly to the cart quote's total.
+    const baseSum = rowTotalsBeforeFee.reduce((s, t) => s + t, 0);
+    const rowFeeShare = rowTotalsBeforeFee.map((t) => (baseSum > 0 ? Math.round((BF * t) / baseSum) : 0));
+    rowFeeShare[0] = (rowFeeShare[0] ?? 0) + (BF - rowFeeShare.reduce((s, v) => s + v, 0));
+    const rowTotals = rowTotalsBeforeFee.map((t, i) => t + rowFeeShare[i]!);
     const rowFee = rowTotals.map((t) => (grandTotal > 0 ? Math.round((F * t) / grandTotal) : 0));
     rowFee[0] = (rowFee[0] ?? 0) + (F - rowFee.reduce((s, f) => s + f, 0));
     const rowAgent = rowTotals.map((t) => (grandTotal > 0 ? Math.round((A * t) / grandTotal) : 0));

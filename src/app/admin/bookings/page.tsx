@@ -7,7 +7,7 @@ import { agents, bookings, providers } from '@/db/schema';
 import { formatMoney } from '@/lib/money';
 import { formatDate, formatDateTime, cn } from '@/lib/utils';
 import { pageMetadata } from '@/lib/seo';
-import { Badge, BOOKING_STATUS_TONE, PAYMENT_STATUS_TONE } from '@/components/ui/badge';
+import { Badge, BOOKING_STATUS_TONE, PAYMENT_STATUS_TONE, paymentStatusLabel } from '@/components/ui/badge';
 import { AdminBookingActions } from '@/components/admin/booking-actions';
 
 export const dynamic = 'force-dynamic';
@@ -153,7 +153,7 @@ export default async function AdminBookingsPage({
                     <span className="font-mono text-[12.5px] font-semibold text-brand-700">{b.code}</span>
                     <Badge tone={BOOKING_STATUS_TONE[b.status] ?? 'neutral'}>{b.status.replace('_', '-')}</Badge>
                     <Badge tone={PAYMENT_STATUS_TONE[b.paymentStatus] ?? 'neutral'}>
-                      {b.paymentStatus === 'venue' ? 'at venue' : b.paymentStatus}
+                      {paymentStatusLabel(b.paymentStatus)}
                     </Badge>
                     <Badge tone={b.channel === 'agent' ? 'clay' : b.channel === 'admin' ? 'info' : 'neutral'}>{b.channel}</Badge>
                   </div>

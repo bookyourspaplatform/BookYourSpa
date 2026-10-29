@@ -45,7 +45,15 @@ export const PAYMENT_STATUS_TONE: Record<string, BadgeTone> = {
   unpaid: 'warning',
   processing: 'info',
   paid: 'success',
+  deposit_paid: 'brand',
   refunded: 'neutral',
   partially_refunded: 'warning',
   venue: 'info',
 };
+
+/** Human label for a payment status — every dashboard shows the same words. */
+export function paymentStatusLabel(status: string): string {
+  if (status === 'venue') return 'pay at venue';
+  if (status === 'deposit_paid') return 'deposit paid';
+  return status;
+}

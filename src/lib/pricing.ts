@@ -34,7 +34,14 @@ export type PriceQuote = {
   listPrice: number;
   discountAmount: number;
   couponCode: string | null;
+  /** Platform booking fee added on top of the discounted subtotal. */
+  bookingFee: number;
+  /** Grand total the customer owes (subtotal + booking fee). */
   total: number;
+  /** Collected online now when a deposit is configured, else the full total. */
+  dueNow: number;
+  /** Remainder settled at the spa after the deposit. */
+  balanceDue: number;
   platformBps: number;
   platformFee: number;
   agentCommission: number;
@@ -55,10 +62,17 @@ export function priceBooking(input: {
   platformBps: number;
   agent?: AgentTermsLike | null;
   discountBearer?: DiscountBearer;
+  /** Platform booking fee in basis points (500 = 5%), added to the total. */
+  bookingFeeBps?: number;
+  /** Share of the total paid online up front in bps (1000 = 10% deposit). */
+  depositBps?: number;
 }): PriceQuote {
   const { listPrice, coupon, platformBps, agent, discountBearer } = input;
   const discountAmount = coupon ? applyCoupon(coupon, listPrice) : 0;
-  const total = Math.max(0, listPrice - discountAmount);
+  // Everything below splits the *discounted* subtotal; the booking fee is
+  // layered on top afterwards so it never distorts provider/agent shares.
+  const subtotal = Math.max(0, listPrice - discountAmount);
+  const total = subtotal;
 
   // Fees are taken from `feeBase`: with no stated bearer the discount is
   // shared (legacy split on the discounted total); with a stated bearer the
@@ -98,16 +112,36 @@ export function priceBooking(input: {
   agentCommission = Math.max(0, Math.min(agentCommission, total));
   const providerEarning = total - platformFee - agentCommission;
 
+  /* --- booking fee: platform revenue charged on top of the subtotal. It is
+     added after the split above, so it can never be absorbed by the spa. --- */
+  const feeBps = clampBps(input.bookingFeeBps);
+  const bookingFee = Math.round((subtotal * feeBps) / 10_000);
+  const grandTotal = subtotal + bookingFee;
+  platformFee += bookingFee;
+
+  /* --- deposit: what checkout collects now vs what the spa takes later --- */
+  const depositBps = clampBps(input.depositBps);
+  const dueNow = depositBps > 0 ? Math.round((grandTotal * depositBps) / 10_000) : grandTotal;
+
   return {
     listPrice,
     discountAmount,
     couponCode: coupon?.code ?? null,
-    total,
+    bookingFee,
+    total: grandTotal,
+    dueNow,
+    balanceDue: grandTotal - dueNow,
     platformBps,
     platformFee,
     agentCommission,
     providerEarning,
   };
+}
+
+/** Basis points are meaningful only inside 0–100%. */
+function clampBps(value: number | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+  return Math.min(10_000, Math.max(0, Math.round(value)));
 }
 
 /* ------------------------ treatment price options ---------------------- */

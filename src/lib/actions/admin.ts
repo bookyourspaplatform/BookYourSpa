@@ -1183,6 +1183,6 @@ export async function adminTotals(db: AppDb) {
   const [gmv] = await db
     .select({ total: sql<string>`coalesce(sum(${bookings.totalAmount}), 0)`, n: sql<number>`count(*)::int` })
     .from(bookings)
-    .where(sql`${bookings.paymentStatus} IN ('paid','venue')`);
+    .where(sql`${bookings.paymentStatus} IN ('paid','deposit_paid','venue')`);
   return gmv;
 }

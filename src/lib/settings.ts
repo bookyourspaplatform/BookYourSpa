@@ -26,12 +26,22 @@ export const DEFAULT_SETTINGS = {
   'booking.cancellationHours': 24,
   'booking.pendingHoldMinutes': 30,
   'booking.defaultIntervalMinutes': 30,
+  /** Booking fee added to every reservation (percent of the subtotal). */
+  'booking.feePercent': 5,
+  /**
+   * Share of the grand total collected online at checkout; the remainder is
+   * settled at the spa. 0 = the customer pays in full up front.
+   */
+  'booking.depositPercent': 10,
   'finance.defaultPlatformCommissionBps': 1500,
   /** Commission charged on walk-in sales taken through the POS till. */
   'finance.posCommissionBps': 300,
   'finance.defaultAgentCommissionBps': 1000,
   'finance.defaultCurrency': 'IDR',
   'features.onlinePayments': true,
+  /** Platform-wide switches for the hosted gateways (branch lists still apply). */
+  'features.stripe': true,
+  'features.paypal': true,
   'features.guestCheckout': true,
   'features.agentPortal': true,
   'features.providerSignup': true,
@@ -73,4 +83,23 @@ export async function setSetting(key: string, value: unknown): Promise<void> {
 
 export function invalidateSettingsCache(): void {
   cache = null;
+}
+
+/**
+ * Is this gateway switched on for the whole platform? Branch-level
+ * `paymentMethods` only choose what a spa *offers* — these settings are the
+ * admin's kill switch, so a gateway off here never reaches checkout even when
+ * the branch and the environment both allow it.
+ */
+export function platformGatewayEnabled(name: string, settings: Settings): boolean {
+  if (name === 'stripe') return settings['features.stripe'];
+  if (name === 'paypal') return settings['features.paypal'];
+  return true; // razorpay and pay-at-venue are not admin-switchable
+}
+
+/** Percent setting → basis points, clamped to 0–100%. */
+export function percentToBps(value: unknown): number {
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(Math.min(100, Math.max(0, n)) * 100);
 }

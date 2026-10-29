@@ -8,7 +8,7 @@ import { formatMoney } from '@/lib/money';
 import { formatDateTime } from '@/lib/utils';
 import { pageMetadata } from '@/lib/seo';
 import { StatCard } from '@/components/ui/stat';
-import { Badge, BOOKING_STATUS_TONE, PAYMENT_STATUS_TONE } from '@/components/ui/badge';
+import { Badge, BOOKING_STATUS_TONE, PAYMENT_STATUS_TONE, paymentStatusLabel } from '@/components/ui/badge';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,7 +16,7 @@ export async function generateMetadata(): Promise<Metadata> {
   return pageMetadata({ title: 'Sales', description: 'Your bookings and commissions.', path: '/agent/sales', noIndex: true });
 }
 
-const PAID = ['paid', 'venue'] as const;
+const PAID = ['paid', 'deposit_paid', 'venue'] as const;
 const COMMISSION_TONE: Record<string, 'warning' | 'success' | 'neutral' | 'brand'> = {
   pending: 'warning',
   approved: 'brand',
@@ -172,7 +172,7 @@ export default async function AgentSalesPage() {
                     </span>
                   )}
                   <Badge tone={PAYMENT_STATUS_TONE[b.paymentStatus] ?? 'neutral'}>
-                    {b.paymentStatus === 'venue' ? 'at venue' : b.paymentStatus}
+                    {paymentStatusLabel(b.paymentStatus)}
                   </Badge>
                   <Link href={`/voucher/${b.code}`} className="text-[13px] font-medium text-brand-700 hover:underline">
                     Voucher

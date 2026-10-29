@@ -8,7 +8,7 @@ import { formatMoney } from '@/lib/money';
 import { formatDateTime, formatDate } from '@/lib/utils';
 import { pageMetadata } from '@/lib/seo';
 import { StatCard } from '@/components/ui/stat';
-import { Badge, BOOKING_STATUS_TONE, PAYMENT_STATUS_TONE } from '@/components/ui/badge';
+import { Badge, BOOKING_STATUS_TONE, PAYMENT_STATUS_TONE, paymentStatusLabel } from '@/components/ui/badge';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,7 +16,7 @@ export async function generateMetadata(): Promise<Metadata> {
   return pageMetadata({ title: 'Agent console', description: 'Reseller dashboard.', path: '/agent', noIndex: true });
 }
 
-const PAID = ['paid', 'venue'] as const;
+const PAID = ['paid', 'deposit_paid', 'venue'] as const;
 
 export default async function AgentOverview() {
   const user = (await getCurrentUser())!;
@@ -154,7 +154,7 @@ export default async function AgentOverview() {
                   <div className="flex shrink-0 items-center gap-2">
                     <span className="text-[13.5px] font-medium tabular-nums">{formatMoney(b.totalAmount, b.currency)}</span>
                     <Badge tone={PAYMENT_STATUS_TONE[b.paymentStatus] ?? 'neutral'}>
-                      {b.paymentStatus === 'venue' ? 'at venue' : b.paymentStatus}
+                      {paymentStatusLabel(b.paymentStatus)}
                     </Badge>
                   </div>
                 </li>

@@ -88,7 +88,10 @@ type QuoteDto = {
     listPrice: number;
     discountAmount: number;
     couponCode: string | null;
+    bookingFee: number;
     total: number;
+    dueNow: number;
+    balanceDue: number;
     platformFee: number;
     agentCommission: number;
     providerEarning: number;
@@ -488,11 +491,11 @@ export function BookingWizard({
   const gateway = useMemo(() => {
     if (gatewayChoice) return gatewayChoice;
     if (!quote) return null;
-    const onlineMethod = branch.paymentMethods.find((m) => m !== 'venue');
+    const onlineMethod = quote.payment.methods.find((m) => m !== 'venue');
     if (quote.payment.online && onlineMethod) return onlineMethod;
     if (quote.payment.venue) return 'venue';
     return null;
-  }, [gatewayChoice, quote, branch.paymentMethods]);
+  }, [gatewayChoice, quote]);
 
   /* ----------------------------- selection --------------------------- */
   const shownDays: { date: string; count: number }[] = togetherMode
@@ -649,7 +652,8 @@ export function BookingWizard({
     setCouponApplied(code || null);
   }
 
-  const gatewayOptions = branch.paymentMethods.filter((m) =>
+  // Branch options ∩ the admin's platform switches (the quote carries both).
+  const gatewayOptions = (quote?.payment.methods ?? branch.paymentMethods).filter((m) =>
     m === 'venue' ? true : branch.onlinePaymentEnabled && quote?.payment.online,
   );
 
@@ -657,6 +661,10 @@ export function BookingWizard({
     therapistFilter === 'any' ? (slot?.therapistId ?? null) : therapistFilter;
 
   const total = quote?.pricing.total ?? cartEstimate;
+  // Deposit mode: only part of the total is charged online, the rest on arrival.
+  const depositActive =
+    gateway !== 'venue' && Boolean(quote) && (quote?.pricing.balanceDue ?? 0) > 0;
+  const depositPct = depositActive && total > 0 ? Math.round((quote!.pricing.dueNow / total) * 100) : 0;
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
@@ -1503,12 +1511,36 @@ export function BookingWizard({
                     </span>
                   </div>
                 )}
+                {(quote?.pricing.bookingFee ?? 0) > 0 && (
+                  <div className="mt-1.5 flex items-center justify-between text-sm">
+                    <span className="text-ink-500">Booking fee</span>
+                    <span className="tabular-nums">
+                      +{formatMoney(quote!.pricing.bookingFee, branch.currency)}
+                    </span>
+                  </div>
+                )}
                 <div className="mt-2.5 flex items-center justify-between border-t border-ink-100 pt-2.5">
                   <span className="font-semibold">Total</span>
                   <span className="text-lg font-semibold tabular-nums text-brand-800">
                     {quoteLoading ? '…' : formatMoney(total, branch.currency)}
                   </span>
                 </div>
+                {depositActive && (
+                  <>
+                    <div className="mt-1.5 flex items-center justify-between text-sm">
+                      <span className="font-medium text-ink-700">Pay now (deposit {depositPct}%)</span>
+                      <span className="font-semibold tabular-nums text-brand-800">
+                        {formatMoney(quote!.pricing.dueNow, branch.currency)}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex items-center justify-between text-sm">
+                      <span className="text-ink-500">Remaining at the spa</span>
+                      <span className="tabular-nums">
+                        {formatMoney(quote!.pricing.balanceDue, branch.currency)}
+                      </span>
+                    </div>
+                  </>
+                )}
                 {(quote?.pricing.agentCommission ?? 0) > 0 && (
                   <div className="mt-1.5 flex items-center justify-between text-sm text-clay-700">
                     <span>Your commission (agent rate)</span>
@@ -1518,6 +1550,9 @@ export function BookingWizard({
                   </div>
                 )}
                 <p className="mt-3 text-[12.5px] leading-relaxed text-ink-400">
+                  {depositActive
+                    ? `A ${depositPct}% deposit of ${formatMoney(quote!.pricing.dueNow, branch.currency)} is taken now — the ${formatMoney(quote!.pricing.balanceDue, branch.currency)} balance is settled at the spa. `
+                    : ''}
                   Paid via {GATEWAY_LABELS[gateway ?? 'venue'] ?? gateway}. Voucher is issued instantly after
                   confirmation and sent to {details.email}.
                 </p>
@@ -1618,6 +1653,14 @@ export function BookingWizard({
               {quote && quote.pricing.discountAmount > 0 && (
                 <p className="mt-0.5 text-right text-[12.5px] text-emerald-600">
                   You save {formatMoney(quote.pricing.discountAmount, branch.currency)}
+                </p>
+              )}
+              {depositActive && (
+                <p className="mt-1 flex items-center justify-between text-[13px]">
+                  <span className="text-ink-500">Pay now ({depositPct}%)</span>
+                  <span className="font-semibold tabular-nums">
+                    {formatMoney(quote!.pricing.dueNow, branch.currency)}
+                  </span>
                 </p>
               )}
             </div>

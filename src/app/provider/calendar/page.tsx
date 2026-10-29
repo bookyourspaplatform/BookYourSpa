@@ -8,7 +8,7 @@ import { getCurrentUser } from '@/lib/auth/session';
 import { zonedToUtc } from '@/lib/availability';
 import { formatDate, minutesOf, cn } from '@/lib/utils';
 import { pageMetadata } from '@/lib/seo';
-import { Badge, BOOKING_STATUS_TONE, PAYMENT_STATUS_TONE } from '@/components/ui/badge';
+import { Badge, BOOKING_STATUS_TONE, PAYMENT_STATUS_TONE, paymentStatusLabel } from '@/components/ui/badge';
 import { BookingActions } from '@/components/dash/booking-actions';
 
 export const dynamic = 'force-dynamic';
@@ -215,7 +215,7 @@ export default async function ProviderCalendarPage({
                             <div className="mt-1 flex flex-wrap gap-1.5">
                               <Badge tone={BOOKING_STATUS_TONE[b.status] ?? 'neutral'}>{b.status.replace('_', '-')}</Badge>
                               <Badge tone={PAYMENT_STATUS_TONE[b.paymentStatus] ?? 'neutral'}>
-                                {b.paymentStatus === 'venue' ? 'at venue' : b.paymentStatus}
+                                {paymentStatusLabel(b.paymentStatus)}
                               </Badge>
                             </div>
                           </div>

@@ -21,7 +21,7 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 const ACTIVE = ['pending', 'confirmed'] as const;
-const PAID = ['paid', 'venue'] as const;
+const PAID = ['paid', 'deposit_paid', 'venue'] as const;
 
 export default async function ProviderOverview() {
   const user = (await getCurrentUser())!;

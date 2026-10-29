@@ -10,7 +10,7 @@ import { formatMoney } from '@/lib/money';
 import { cn, formatDate } from '@/lib/utils';
 import { pageMetadata } from '@/lib/seo';
 import { JsonLd } from '@/components/json-ld';
-import { Badge, BOOKING_STATUS_TONE, PAYMENT_STATUS_TONE } from '@/components/ui/badge';
+import { Badge, BOOKING_STATUS_TONE, PAYMENT_STATUS_TONE, paymentStatusLabel } from '@/components/ui/badge';
 import { Logo } from '@/components/logo';
 import { PrintButton } from '@/components/booking/print-button';
 
@@ -57,6 +57,11 @@ export default async function VoucherPage({ params }: { params: Promise<{ code: 
   const productLines = booking.bookingProducts ?? [];
   const grandTotal = groupRows.reduce((sum, row) => sum + row.totalAmount, 0);
   const isGroup = groupRows.length > 1;
+  // Captured online (the checkout attaches its payment to the first line).
+  const paidOnline = (booking.payments ?? [])
+    .filter((p) => p.status === 'succeeded')
+    .reduce((sum, p) => sum + p.amount - p.refundedAmount, 0);
+  const balanceDue = Math.max(0, grandTotal - paidOnline);
 
   const settings = await getSettings();
   const b = booking.branch;
@@ -155,7 +160,7 @@ export default async function VoucherPage({ params }: { params: Promise<{ code: 
             <div className="flex flex-col items-end gap-2">
               <Badge tone={BOOKING_STATUS_TONE[booking.status] ?? 'neutral'}>{booking.status}</Badge>
               <Badge tone={PAYMENT_STATUS_TONE[booking.paymentStatus] ?? 'neutral'}>
-                {booking.paymentStatus === 'venue' ? 'pay at venue' : booking.paymentStatus}
+                {paymentStatusLabel(booking.paymentStatus)}
               </Badge>
             </div>
           </header>
@@ -229,7 +234,9 @@ export default async function VoucherPage({ params }: { params: Promise<{ code: 
 
           <footer className="flex flex-wrap items-center justify-between gap-4 border-t border-ink-100 bg-sand-50 px-6 py-4">
             <div>
-              <p className="text-[12px] uppercase tracking-wide text-ink-400">Total paid</p>
+              <p className="text-[12px] uppercase tracking-wide text-ink-400">
+                {booking.paymentStatus === 'deposit_paid' ? 'Total' : 'Total paid'}
+              </p>
               <p className="text-lg font-semibold tabular-nums text-brand-800">
                 {formatMoney(grandTotal, booking.currency)}
               </p>
@@ -254,6 +261,11 @@ export default async function VoucherPage({ params }: { params: Promise<{ code: 
               Payment is due by{' '}
               {formatDate(booking.expiresAt, tz, { dateStyle: 'medium', timeStyle: 'short' })} ({tz}). Unpaid online
               reservations release the slot automatically.
+            </p>
+          )}
+          {booking.paymentStatus === 'deposit_paid' && (
+            <p className="rounded-2xl border border-brand-200 bg-brand-50 px-4 py-3 text-brand-800">
+              Deposit paid online — {formatMoney(balanceDue, booking.currency)} is due at the spa when you arrive.
             </p>
           )}
           <p>

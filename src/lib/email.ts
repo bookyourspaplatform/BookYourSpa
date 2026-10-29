@@ -19,9 +19,11 @@ export function voucherEmailHtml(booking: Booking, branch: Branch, treatment: Tr
   const paid = booking.paymentStatus === 'paid';
   const payLabel = paid
     ? 'Paid online'
-    : booking.paymentStatus === 'venue'
-      ? 'Pay at the venue'
-      : 'Payable at the venue / pending';
+    : booking.paymentStatus === 'deposit_paid'
+      ? `Deposit paid online — ${money(booking.totalAmount, booking.currency)} still due at the spa`
+      : booking.paymentStatus === 'venue'
+        ? 'Pay at the venue'
+        : 'Payable at the venue / pending';
   return `
   <div style="font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:#f6f2ec;padding:32px 16px;color:#17201d">
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;margin:0 auto;background:#fff;border-radius:16px;border:1px solid #eef1f0">

@@ -53,6 +53,8 @@ export const PAYMENT_STATUSES = [
   'unpaid',
   'processing',
   'paid',
+  /** Deposit captured online — the balance is collected at the spa. */
+  'deposit_paid',
   'refunded',
   'partially_refunded',
   'venue',

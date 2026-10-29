@@ -3,6 +3,7 @@ import { getDb, type Tx } from '@/db';
 import { bookings, branches, payments, treatments, type Booking, type PaymentGateway } from '@/db/schema';
 import { sendBookingVoucherEmail } from '@/lib/email';
 import { logAudit } from '@/lib/audit';
+import { getSettings, platformGatewayEnabled } from '@/lib/settings';
 import { stripeGateway } from './stripe';
 import { paypalGateway } from './paypal';
 import { razorpayGateway } from './razorpay';
@@ -17,14 +18,23 @@ export function getGateway(name: string): Gateway | null {
   return gateway && gateway.enabled() ? gateway : null;
 }
 
-/** Gateways the branch allows AND that are configured in this environment. */
-export function enabledGatewaysForBranch(branch: {
+/**
+ * Gateways the branch allows AND that are configured in this environment AND
+ * that the admin has switched on in System settings.
+ */
+export async function enabledGatewaysForBranch(branch: {
   paymentMethods: string[];
   onlinePaymentEnabled: boolean;
   currency: string;
-}): Gateway[] {
+}): Promise<Gateway[]> {
   if (!branch.onlinePaymentEnabled) return [];
-  return ALL.filter((g) => g.enabled() && branch.paymentMethods.includes(g.name));
+  const settings = await getSettings();
+  return ALL.filter(
+    (g) =>
+      g.enabled() &&
+      branch.paymentMethods.includes(g.name) &&
+      platformGatewayEnabled(g.name, settings),
+  );
 }
 
 export type ConfirmResult = { changed: boolean; bookingCode?: string; alreadyPaid?: boolean };
@@ -67,7 +77,23 @@ export async function confirmPayment(opts: {
     return { changed: false, bookingCode: booking.code };
   }
 
-  if (booking.paymentStatus === 'paid') {
+  const paymentAmount = opts.amountMinor ?? existing?.amount ?? booking.totalAmount;
+
+  // What the whole checkout is worth: a multi-treatment group shares one
+  // payment, so the rows' totals are summed before comparing with the capture.
+  const covered = booking.groupId
+    ? await db.query.bookings.findMany({
+        where: eq(bookings.groupId, booking.groupId),
+        columns: { totalAmount: true },
+      })
+    : [booking];
+  const grandTotal = covered.reduce((sum, row) => sum + row.totalAmount, 0);
+  // A capture below the grand total is a deposit — the balance stays payable
+  // at the spa, so the booking is settled but not fully paid.
+  const settled = paymentAmount >= grandTotal;
+  const finalStatus = settled ? 'paid' : 'deposit_paid';
+
+  if (booking.paymentStatus === 'paid' || booking.paymentStatus === 'deposit_paid') {
     return { changed: false, bookingCode: booking.code, alreadyPaid: true };
   }
 
@@ -78,9 +104,12 @@ export async function confirmPayment(opts: {
       .from(bookings)
       .where(eq(bookings.id, bookingId))
       .for('update');
-    if (!locked.length || locked[0]!.paymentStatus === 'paid') return;
-
-    const paymentAmount = opts.amountMinor ?? existing?.amount ?? booking.totalAmount;
+    if (
+      !locked.length ||
+      locked[0]!.paymentStatus === 'paid' ||
+      locked[0]!.paymentStatus === 'deposit_paid'
+    )
+      return;
 
     if (existing) {
       await tx
@@ -114,7 +143,7 @@ export async function confirmPayment(opts: {
     await tx
       .update(bookings)
       .set({
-        paymentStatus: 'paid',
+        paymentStatus: finalStatus,
         status: booking.status === 'pending' ? 'confirmed' : booking.status,
         paidAt: new Date(),
         expiresAt: null,
@@ -131,7 +160,7 @@ export async function confirmPayment(opts: {
       );
       await tx
         .update(bookings)
-        .set({ paymentStatus: 'paid', paidAt: new Date(), expiresAt: null })
+        .set({ paymentStatus: finalStatus, paidAt: new Date(), expiresAt: null })
         .where(siblings);
       await tx
         .update(bookings)
@@ -144,7 +173,7 @@ export async function confirmPayment(opts: {
   const branch = fresh ? await db.query.branches.findFirst({ where: eq(branches.id, fresh.branchId) }) : null;
   const treatment = fresh ? await db.query.treatments.findFirst({ where: eq(treatments.id, fresh.treatmentId) }) : null;
 
-  if (fresh && branch && treatment && fresh.paymentStatus === 'paid') {
+  if (fresh && branch && treatment && (fresh.paymentStatus === 'paid' || fresh.paymentStatus === 'deposit_paid')) {
     await logAudit({
       actorId: opts.actorId ?? null,
       actorRole: opts.actorId ? 'super_admin' : null,

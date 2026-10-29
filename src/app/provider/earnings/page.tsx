@@ -9,7 +9,7 @@ import { formatMoney } from '@/lib/money';
 import { formatDate, cn } from '@/lib/utils';
 import { pageMetadata } from '@/lib/seo';
 import { StatCard, BarSeries } from '@/components/ui/stat';
-import { Badge, PAYMENT_STATUS_TONE } from '@/components/ui/badge';
+import { Badge, PAYMENT_STATUS_TONE, paymentStatusLabel } from '@/components/ui/badge';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,7 +17,7 @@ export async function generateMetadata(): Promise<Metadata> {
   return pageMetadata({ title: 'Earnings', description: 'Provider earnings and payouts.', path: '/provider/earnings', noIndex: true });
 }
 
-const PAID = ['paid', 'venue'] as const;
+const PAID = ['paid', 'deposit_paid', 'venue'] as const;
 
 function shiftMonth(month: string, delta: number): string {
   const [y, m] = month.split('-').map(Number);
@@ -172,7 +172,9 @@ export default async function ProviderEarningsPage({
                         <Link href={`/voucher/${b.code}`} className="font-mono text-[12.5px] text-brand-700 hover:underline">
                           {b.code}
                         </Link>
-                        <Badge tone={PAYMENT_STATUS_TONE[b.paymentStatus] ?? 'neutral'}>{b.paymentStatus}</Badge>
+                        <Badge tone={PAYMENT_STATUS_TONE[b.paymentStatus] ?? 'neutral'}>
+                          {paymentStatusLabel(b.paymentStatus)}
+                        </Badge>
                       </div>
                       <p className="text-[12.5px] text-ink-500">
                         {b.guestName}

@@ -134,3 +134,62 @@ describe('priceBooking', () => {
     expect(s.providerPct).toBe(75);
   });
 });
+
+describe('booking fee & deposit', () => {
+  it('adds the fee on top without moving the spa\u2019s share', () => {
+    const base = priceBooking({ listPrice: 450_000, platformBps: 1500 });
+    const withFee = priceBooking({ listPrice: 450_000, platformBps: 1500, bookingFeeBps: 500 });
+
+    expect(withFee.bookingFee).toBe(22_500); // 5%
+    expect(withFee.total).toBe(472_500);
+    expect(withFee.platformFee).toBe(base.platformFee + 22_500); // the fee is the platform\u2019s
+    expect(withFee.providerEarning).toBe(base.providerEarning); // unchanged
+    expect(withFee.platformFee + withFee.agentCommission + withFee.providerEarning).toBe(withFee.total);
+  });
+
+  it('splits the total into a deposit paid now and a balance paid later', () => {
+    const q = priceBooking({
+      listPrice: 450_000,
+      platformBps: 1500,
+      bookingFeeBps: 500,
+      depositBps: 1000, // 10%
+    });
+    expect(q.total).toBe(472_500);
+    expect(q.dueNow).toBe(47_250);
+    expect(q.balanceDue).toBe(425_250);
+    expect(q.dueNow + q.balanceDue).toBe(q.total);
+  });
+
+  it('charges everything up front when no deposit is configured', () => {
+    const q = priceBooking({ listPrice: 450_000, platformBps: 1500 });
+    expect(q.bookingFee).toBe(0);
+    expect(q.dueNow).toBe(q.total);
+    expect(q.balanceDue).toBe(0);
+  });
+
+  it('keeps the split exact with a coupon, fee and deposit together', () => {
+    const q = priceBooking({
+      listPrice: 450_000,
+      coupon: { code: 'WELCOME10', discountType: 'percent', discountValue: 1000 },
+      platformBps: 1500,
+      bookingFeeBps: 500,
+      depositBps: 1000,
+    });
+    expect(q.discountAmount).toBe(45_000);
+    expect(q.bookingFee).toBe(20_250); // 5% of the discounted 405_000
+    expect(q.total).toBe(425_250);
+    expect(q.platformFee + q.agentCommission + q.providerEarning).toBe(q.total);
+    expect(q.dueNow + q.balanceDue).toBe(q.total);
+  });
+
+  it('clamps nonsense percentages instead of blowing the price up', () => {
+    const q = priceBooking({
+      listPrice: 100_000,
+      platformBps: 1500,
+      bookingFeeBps: 999_999,
+      depositBps: -50,
+    });
+    expect(q.bookingFee).toBe(100_000); // capped at 100%
+    expect(q.dueNow).toBe(q.total); // a negative deposit means pay in full
+  });
+});

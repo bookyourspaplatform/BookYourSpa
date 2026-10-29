@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { getDb, type AppDb } from '@/db';
 import * as T from '@/db/schema';
@@ -6,6 +6,8 @@ import { hashPassword } from '@/lib/auth/password';
 import { quoteBooking, quoteCart, createBooking, createBookingGroup, cancelBooking, releaseExpiredHolds, redeemablePromotionsFor, BookingError } from '@/lib/booking';
 import { getAvailability, getTogetherAvailability, zonedToUtc } from '@/lib/availability';
 import { dateKeyInTz, partsInTz } from '@/lib/utils';
+import { confirmPayment } from '@/lib/payments';
+import { invalidateSettingsCache } from '@/lib/settings';
 
 const TZ = 'Asia/Makassar';
 
@@ -122,6 +124,14 @@ beforeAll(async () => {
     status: 'approved',
     referralCode: 'ITTEST',
   });
+
+  // Money settings are pinned off so the split assertions below stay exact;
+  // the fee/deposit suite flips them on and restores them afterwards.
+  await db.insert(T.settings).values([
+    { key: 'booking.feePercent', value: 0 },
+    { key: 'booking.depositPercent', value: 0 },
+  ]);
+  invalidateSettingsCache();
 
   return async () => {
     // Fresh in-memory DB per run; nothing to tear down.
@@ -1277,5 +1287,123 @@ describe('promotion codes', () => {
     ).rejects.toThrow(/does not apply to the treatments/);
 
     await db.delete(T.promotions).where(eq(T.promotions.id, OWN));
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Booking fee, deposit and gateway switches (System settings)         */
+/* ------------------------------------------------------------------ */
+
+describe('booking fee & deposit settings', () => {
+  async function setSettings(values: Record<string, unknown>) {
+    for (const [key, value] of Object.entries(values)) {
+      await db
+        .insert(T.settings)
+        .values({ key, value })
+        .onConflictDoUpdate({ target: T.settings.key, set: { value } });
+    }
+    invalidateSettingsCache();
+  }
+
+  /** Day +4 at a given local hour — a window no other suite books. */
+  function freeSlot(minutes: number): Date {
+    const d = new Date(Date.now() + 4 * 86_400_000);
+    return zonedToUtc(dateKeyInTz(d, TZ), minutes, TZ);
+  }
+
+  afterAll(async () => {
+    await setSettings({
+      'booking.feePercent': 0,
+      'booking.depositPercent': 0,
+      'features.stripe': true,
+      'features.paypal': true,
+    });
+  });
+
+  it('adds the 5% booking fee on top without touching the spa\u2019s earning', async () => {
+    await setSettings({ 'booking.feePercent': 5, 'booking.depositPercent': 10 });
+
+    const quote = await quoteBooking(db, { branchId: ids.branch, treatmentId: ids.treatment });
+    expect(quote.pricing.listPrice).toBe(400_000);
+    expect(quote.pricing.bookingFee).toBe(20_000); // 5%
+    expect(quote.pricing.total).toBe(420_000);
+
+    // The fee is platform revenue: the split the spa sees is unchanged.
+    expect(quote.pricing.platformFee).toBe(80_000); // 60_000 commission + 20_000 fee
+    expect(quote.pricing.providerEarning).toBe(340_000);
+    expect(
+      quote.pricing.platformFee + quote.pricing.agentCommission + quote.pricing.providerEarning,
+    ).toBe(quote.pricing.total);
+
+    // 10% deposit online, the rest on arrival.
+    expect(quote.pricing.dueNow).toBe(42_000);
+    expect(quote.pricing.balanceDue).toBe(378_000);
+  });
+
+  it('charges only the deposit at checkout and marks the booking deposit_paid', async () => {
+    await setSettings({ 'booking.feePercent': 5, 'booking.depositPercent': 10 });
+
+    const { booking, quote } = await createBooking(db, {
+      branchId: ids.branch,
+      treatmentId: ids.treatment,
+      startAt: freeSlot(10 * 60),
+      customer: { name: 'Deposit Guest', email: 'guest-deposit@example.com' },
+      paymentMode: 'online',
+    });
+    expect(booking.totalAmount).toBe(420_000);
+    expect(booking.paymentStatus).toBe('unpaid');
+
+    const captured = await confirmPayment({
+      bookingId: booking.id,
+      gateway: 'stripe',
+      externalId: 'cs_test_deposit_only',
+      amountMinor: quote.pricing.dueNow,
+      currency: quote.currency,
+    });
+    expect(captured.changed).toBe(true);
+
+    const row = await db.query.bookings.findFirst({ where: eq(T.bookings.id, booking.id) });
+    expect(row?.paymentStatus).toBe('deposit_paid'); // balance still due at the spa
+    expect(row?.status).toBe('confirmed'); // the appointment itself is booked
+    expect(row?.paidAt).not.toBeNull();
+  });
+
+  it('still marks a fully paid booking as paid', async () => {
+    await setSettings({ 'booking.feePercent': 5, 'booking.depositPercent': 10 });
+
+    const { booking, quote } = await createBooking(db, {
+      branchId: ids.branch,
+      treatmentId: ids.treatment,
+      startAt: freeSlot(11 * 60),
+      customer: { name: 'Full Guest', email: 'guest-full@example.com' },
+      paymentMode: 'online',
+    });
+
+    const captured = await confirmPayment({
+      bookingId: booking.id,
+      gateway: 'paypal',
+      externalId: 'PAYID-test-full',
+      amountMinor: quote.pricing.total,
+      currency: quote.currency,
+    });
+    expect(captured.changed).toBe(true);
+
+    const row = await db.query.bookings.findFirst({ where: eq(T.bookings.id, booking.id) });
+    expect(row?.paymentStatus).toBe('paid');
+  });
+
+  it('lets the admin switch Stripe/PayPal off platform-wide', async () => {
+    await setSettings({ 'features.stripe': false, 'features.paypal': false });
+
+    const off = await quoteBooking(db, { branchId: ids.branch, treatmentId: ids.treatment });
+    // The branch still offers both, but the platform switches remove them.
+    expect(off.payment.methods).toEqual(['venue']);
+    expect(off.payment.online).toBe(false);
+    expect(off.payment.venue).toBe(true);
+
+    await setSettings({ 'features.stripe': true, 'features.paypal': true });
+    const on = await quoteBooking(db, { branchId: ids.branch, treatmentId: ids.treatment });
+    expect(on.payment.methods).toEqual(['stripe', 'venue']);
+    expect(on.payment.online).toBe(true);
   });
 });

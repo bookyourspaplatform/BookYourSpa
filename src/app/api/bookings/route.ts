@@ -7,7 +7,7 @@ import { BookingError, createBookingGroup, type CreateGroupItem } from '@/lib/bo
 import { getSession } from '@/lib/auth/session';
 import { getSettings } from '@/lib/settings';
 import { appUrl } from '@/lib/seo';
-import { enabledGatewaysForBranch, getGateway, type CheckoutInput } from '@/lib/payments';
+import { enabledGatewaysForBranch, type CheckoutInput } from '@/lib/payments';
 import { emailVoucherForBooking } from '@/lib/payments';
 import { logAudit } from '@/lib/audit';
 import { assertSameOrigin, clientIpOf, jsonError, rateLimit } from '@/lib/security';
@@ -178,7 +178,7 @@ export async function POST(req: Request) {
     if (!branchRow) return jsonError('Branch not found.', 404);
     const branch = branchRow;
 
-    const allowed = enabledGatewaysForBranch(branch);
+    const allowed = await enabledGatewaysForBranch(branch);
     const gateway = input.gateway ? allowed.find((g) => g.name === input.gateway) : allowed[0];
     if (!gateway) {
       return jsonError(
@@ -196,7 +196,7 @@ export async function POST(req: Request) {
       booking: primary,
       branch,
       treatment: treatmentRow,
-      amountMinor: quote.pricing.total,
+      amountMinor: quote.pricing.dueNow,
       currency: quote.currency,
       baseUrl: base,
       successUrl: `${base}/voucher/${primary.code}`,
@@ -211,7 +211,8 @@ export async function POST(req: Request) {
       bookingId: primary.id,
       gateway: gateway.name,
       status: 'pending',
-      amount: quote.pricing.total,
+      // Only the deposit is collected now; the balance is settled at the spa.
+      amount: quote.pricing.dueNow,
       currency: quote.currency,
       externalId: checkout.externalId,
       clientSecret: checkout.clientSecret ?? null,

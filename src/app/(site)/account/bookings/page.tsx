@@ -8,7 +8,7 @@ import { getMyBookings, bookingSummary, canCancelCustomer } from '@/lib/account'
 import { formatDateTime, cn } from '@/lib/utils';
 import { formatMoney } from '@/lib/money';
 import { pageMetadata } from '@/lib/seo';
-import { Badge, BOOKING_STATUS_TONE, PAYMENT_STATUS_TONE } from '@/components/ui/badge';
+import { Badge, BOOKING_STATUS_TONE, PAYMENT_STATUS_TONE, paymentStatusLabel } from '@/components/ui/badge';
 import { CancelBookingButton } from '@/components/account/cancel-booking-button';
 
 export const dynamic = 'force-dynamic';
@@ -88,7 +88,7 @@ export default async function AccountBookingsPage({
                       <h3 className="text-[15.5px] font-medium">{b.treatmentName}</h3>
                       <Badge tone={BOOKING_STATUS_TONE[b.status] ?? 'neutral'}>{b.status}</Badge>
                       <Badge tone={PAYMENT_STATUS_TONE[b.paymentStatus] ?? 'neutral'}>
-                        {b.paymentStatus === 'venue' ? 'pay at venue' : b.paymentStatus}
+                        {paymentStatusLabel(b.paymentStatus)}
                       </Badge>
                     </div>
                     <p className="mt-1 flex items-center gap-1.5 text-[13.5px] text-ink-500">

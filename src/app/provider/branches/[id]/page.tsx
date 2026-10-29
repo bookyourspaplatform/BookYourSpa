@@ -19,7 +19,7 @@ import { getCurrentUser } from '@/lib/auth/session';
 import { formatMoney } from '@/lib/money';
 import { formatDateTime, stripHtml } from '@/lib/utils';
 import { pageMetadata } from '@/lib/seo';
-import { Badge, BOOKING_STATUS_TONE, PAYMENT_STATUS_TONE } from '@/components/ui/badge';
+import { Badge, BOOKING_STATUS_TONE, PAYMENT_STATUS_TONE, paymentStatusLabel } from '@/components/ui/badge';
 import { TabLinks } from '@/components/ui/tabs';
 import { BookingActions } from '@/components/dash/booking-actions';
 import { TherapistManager, type TherapistRow } from '@/components/provider/therapist-manager';
@@ -200,7 +200,7 @@ async function BranchBookingsTab({ branchId, timezone }: { branchId: string; tim
                   <span className="font-mono text-[12.5px] font-semibold text-brand-700">{b.code}</span>
                   <Badge tone={BOOKING_STATUS_TONE[b.status] ?? 'neutral'}>{b.status.replace('_', '-')}</Badge>
                   <Badge tone={PAYMENT_STATUS_TONE[b.paymentStatus] ?? 'neutral'}>
-                    {b.paymentStatus === 'venue' ? 'pay at venue' : b.paymentStatus}
+                    {paymentStatusLabel(b.paymentStatus)}
                   </Badge>
                 </div>
                 <p className="mt-1.5 text-[15px] font-medium">{b.treatment?.name ?? 'Treatment'}</p>

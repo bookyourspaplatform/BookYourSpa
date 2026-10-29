@@ -9,7 +9,7 @@ import { formatMoney } from '@/lib/money';
 import { formatDateTime, formatDate } from '@/lib/utils';
 import { pageMetadata } from '@/lib/seo';
 import { StatCard, BarSeries } from '@/components/ui/stat';
-import { Badge, BOOKING_STATUS_TONE, PAYMENT_STATUS_TONE } from '@/components/ui/badge';
+import { Badge, BOOKING_STATUS_TONE, PAYMENT_STATUS_TONE, paymentStatusLabel } from '@/components/ui/badge';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,7 +17,7 @@ export async function generateMetadata(): Promise<Metadata> {
   return pageMetadata({ title: 'Platform admin', description: 'Super admin console.', path: '/admin', noIndex: true });
 }
 
-const PAID = ['paid', 'venue'] as const;
+const PAID = ['paid', 'deposit_paid', 'venue'] as const;
 
 export default async function AdminOverview() {
   await getCurrentUser();
@@ -206,7 +206,7 @@ export default async function AdminOverview() {
                   <span>{b.treatment?.name}</span>
                   <Badge tone={BOOKING_STATUS_TONE[b.status] ?? 'neutral'}>{b.status.replace('_', '-')}</Badge>
                   <Badge tone={PAYMENT_STATUS_TONE[b.paymentStatus] ?? 'neutral'}>
-                    {b.paymentStatus === 'venue' ? 'at venue' : b.paymentStatus}
+                    {paymentStatusLabel(b.paymentStatus)}
                   </Badge>
                 </p>
                 <p className="mt-0.5 text-[13px] text-ink-500">

@@ -84,7 +84,12 @@ export function bookingSummary(rows: MyBooking[]) {
     cancelled,
     next: upcoming[0] ?? null,
     totalSpend: past
-      .filter((r) => r.paymentStatus === 'paid' || r.paymentStatus === 'venue')
+      .filter(
+        (r) =>
+          r.paymentStatus === 'paid' ||
+          r.paymentStatus === 'deposit_paid' ||
+          r.paymentStatus === 'venue',
+      )
       .reduce((sum, r) => sum + r.totalAmount, 0),
   };
 }
@@ -93,7 +98,11 @@ export function canCancelCustomer(booking: MyBooking, cancellationHours: number)
   if (booking.status === 'cancelled') return { allowed: false, reason: 'Already cancelled' };
   if (booking.status === 'completed' || booking.status === 'no_show')
     return { allowed: false, reason: 'Visit already finished' };
-  if (booking.paymentStatus === 'paid' || booking.paymentStatus === 'refunded')
+  if (
+    booking.paymentStatus === 'paid' ||
+    booking.paymentStatus === 'deposit_paid' ||
+    booking.paymentStatus === 'refunded'
+  )
     return { allowed: false, reason: 'Paid bookings are refunded by our team — contact support' };
   const cutoff = booking.startAt.getTime() - cancellationHours * 3600_000;
   if (Date.now() > cutoff) return { allowed: false, reason: `Free cancellation closed ${cancellationHours}h before` };

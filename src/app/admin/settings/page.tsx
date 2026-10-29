@@ -49,7 +49,14 @@ const GROUPS: { title: string; hint: string; keys: string[] }[] = [
       'finance.defaultPlatformCommissionBps',
       'finance.defaultAgentCommissionBps',
       'finance.defaultCurrency',
+      'booking.feePercent',
+      'booking.depositPercent',
     ],
+  },
+  {
+    title: 'Payments',
+    hint: 'Gateways customers may pay with — branch choices still apply.',
+    keys: ['features.stripe', 'features.paypal'],
   },
   {
     title: 'SEO',
