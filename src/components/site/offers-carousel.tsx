@@ -13,6 +13,8 @@ export type OfferSlide = {
   summary: string | null;
   linkUrl: string;
   linkLabel: string;
+  /** Where "Claim this deal" goes — normally the list of spas running this offer. */
+  claimUrl?: string;
   code: string | null;
   codeHint: string;
   /** e.g. "Starts 1 Dec 2026" — shown for promotions not valid yet. */
@@ -77,7 +79,7 @@ export function OffersCarousel({
               <p className="mt-2 max-w-lg text-[14.5px] leading-relaxed text-white/80">{slide.summary}</p>
             )}
             <div className="mt-5 flex flex-wrap gap-3">
-              <Link href={slide.linkUrl} className={buttonClasses('secondary', 'md')}>
+              <Link href={slide.claimUrl ?? slide.linkUrl} className={buttonClasses('secondary', 'md')}>
                 {langStrings.claim}
               </Link>
               <Link href={slide.linkUrl} className={buttonClasses('outlineLight', 'md')}>

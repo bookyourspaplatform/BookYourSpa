@@ -122,6 +122,9 @@ export default async function HomePage() {
 			summary: p.summary,
 			linkUrl: p.linkUrl ?? '/deals',
 			linkLabel: 'View',
+			// Claiming a deal leads to the outlets where the code is honoured:
+			// only the spas whose supplier activated this promotion.
+			claimUrl: p.code ? `/spas?promo=${encodeURIComponent(p.code)}` : (p.linkUrl ?? '/deals'),
 			code: p.code,
 			codeHint: 'Tap to copy',
 			note:

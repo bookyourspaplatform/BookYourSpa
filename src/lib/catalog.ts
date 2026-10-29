@@ -66,6 +66,12 @@ export type SpaFilters = {
   spa?: string;
   /** Spa type (massages, hammam_bath, …). */
   type?: string;
+  /**
+   * Promo code the visitor is claiming. Narrows the list to the outlets where
+   * that code is actually redeemable — a branch/provider-owned promotion's own
+   * outlets, or a general one a supplier has switched on in its console.
+   */
+  promo?: string;
   minPrice?: number;
   maxPrice?: number;
   /** Guest location — enables distance sorting/filtering for "Spa near me". */
@@ -300,6 +306,33 @@ export async function listSpas(db: AppDb, filters: SpaFilters = {}) {
   const spaTypeFacet = new Map<string, number>();
   for (const item of items) for (const t of item.spaTypes) spaTypeFacet.set(t, (spaTypeFacet.get(t) ?? 0) + 1);
   const totalAll = items.length;
+
+  // "Claim this deal": only outlets where the code can actually be used.
+  if (filters.promo) {
+    const raw = filters.promo.trim();
+    const promo = await db.query.promotions.findFirst({
+      where: or(eq(promotions.code, raw.toUpperCase()), eq(promotions.id, raw)),
+    });
+    const eligible = new Set<string>();
+    const now = new Date();
+    if (promo && promo.active && (!promo.endsAt || promo.endsAt >= now)) {
+      if (promo.branchId) {
+        eligible.add(promo.branchId);
+      } else if (promo.providerId) {
+        for (const p of providerRows)
+          if (p.id === promo.providerId) for (const b of p.branches) eligible.add(b.id);
+      } else {
+        const choices = await db.query.providerPromotions.findMany({
+          where: and(eq(providerPromotions.promotionId, promo.id), eq(providerPromotions.active, true)),
+          columns: { providerId: true },
+        });
+        const chosen = new Set(choices.map((c) => c.providerId));
+        for (const p of providerRows)
+          if (chosen.has(p.id)) for (const b of p.branches) eligible.add(b.id);
+      }
+    }
+    items = items.filter((i) => eligible.has(i.id));
+  }
 
   const q = filters.q?.trim().toLowerCase();
   if (q) {
