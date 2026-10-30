@@ -339,6 +339,12 @@ export const branches = pgTable(
       .array()
       .notNull()
       .default(sql`'{}'::text[]`),
+    /**
+     * Manual spend badge for the spa card ($ … $$$$). Null = derive it from
+     * the outlet's cheapest treatment, which used to leave cards without a
+     * level whenever no price had been entered yet.
+     */
+    priceLevel: text('price_level'),
     /** Therapists travel to the guest (massage on call / doorstep). */
     doorstepService: boolean('doorstep_service').notNull().default(false),
     /** Publicly list the branch's therapists (profiles + online booking). */

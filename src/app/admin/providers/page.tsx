@@ -11,6 +11,7 @@ import { StatusActions } from '@/components/admin/status-actions';
 import { AddSpaButton } from '@/components/admin/add-provider-form';
 import { EditSpaButton } from '@/components/admin/edit-spa-button';
 import { AdminTreatmentsButton } from '@/components/admin/treatments-button';
+import { FeatureToggle } from '@/components/admin/feature-toggle';
 import { ClaimsQueue, type ClaimRow } from '@/components/admin/claims-queue';
 
 export const dynamic = 'force-dynamic';
@@ -156,6 +157,7 @@ export default async function AdminProvidersPage({
                     <div className="flex flex-wrap gap-2">
                       <EditSpaButton providerId={p.id} name={p.name} unclaimed={!p.ownerId} />
                       <AdminTreatmentsButton providerId={p.id} name={p.name} />
+                      <FeatureToggle id={p.id} featured={p.featured} name={p.name} />
                     </div>
                     <StatusActions kind="provider" id={p.id} status={p.status} />
                     <div className="flex gap-3 text-[13px]">

@@ -102,7 +102,9 @@ export function SpaCard({
           ) : (
             <span className="text-[13px] text-ink-400">New · no reviews yet</span>
           )}
-          <span className="text-[13px] font-medium text-ink-400">{priceLevel(spa.minPrice, spa.currency)}</span>
+          <span className="text-[13px] font-medium text-ink-400">
+            {spa.priceLevel ?? priceLevel(spa.minPrice, spa.currency)}
+          </span>
         </div>
 
         <div>

@@ -48,6 +48,8 @@ export type SpaListItem = {
   /** Kilometres to this outlet — only set when `near` filtering was used. */
   distanceKm: number | null;
   minPrice: number | null;
+  /** Manually chosen spend badge ($ … $$$$); null = derived from minPrice. */
+  priceLevel: string | null;
   /** Treatment categories offered at this outlet. */
   categories: string[];
   /** Spa business categories from the branch editor. */
@@ -182,6 +184,7 @@ type ProviderRow = Provider & {
     | 'description'
     | 'categories'
     | 'spaTypes'
+    | 'priceLevel'
     | 'images'
     | 'lat'
     | 'lng'
@@ -207,6 +210,7 @@ export async function listSpas(db: AppDb, filters: SpaFilters = {}) {
           description: true,
           categories: true,
           spaTypes: true,
+          priceLevel: true,
           images: true,
           lat: true,
           lng: true,
@@ -289,6 +293,7 @@ export async function listSpas(db: AppDb, filters: SpaFilters = {}) {
         categories: agg?.categories ?? [],
         spaCategories: b.categories ?? [],
         spaTypes: b.spaTypes ?? [],
+        priceLevel: b.priceLevel,
         lat: b.lat == null ? null : Number(b.lat),
         lng: b.lng == null ? null : Number(b.lng),
       };

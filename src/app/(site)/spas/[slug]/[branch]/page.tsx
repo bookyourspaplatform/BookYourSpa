@@ -24,6 +24,8 @@ import { JsonLd } from '@/components/json-ld';
 import { Badge } from '@/components/ui/badge';
 import { GREEN_BTN } from '@/components/ui/classes';
 import { formatMoney } from '@/lib/money';
+import { formatDisplayMoney } from '@/lib/display-currency';
+import { getDisplayCurrency } from '@/lib/currency-cookie';
 import { dateKeyInTz, hourWindowLabel } from '@/lib/utils';
 import { SpaCard, priceLevel } from '@/components/site/spa-card';
 import { TreatmentSelectList } from '@/components/site/treatment-select-list';
@@ -126,6 +128,7 @@ export default async function BranchDetailPage({
   const url = `${base}/spas/${slug}/${branch}`;
 
   const settings = await getSettings();
+  const display = await getDisplayCurrency();
   const user = await getCurrentUser();
   const cancelHours = settings['booking.cancellationHours'];
   const supportEmail = settings['site.supportEmail'];
@@ -178,7 +181,7 @@ export default async function BranchDetailPage({
   const countryName = COUNTRY_NAMES[b.country] ?? b.country;
   const locationText = [b.city, b.region, countryName].filter(Boolean).join(', ');
   const minPrice = treatments.length ? Math.min(...treatments.map((t) => t.price)) : null;
-  const level = priceLevel(minPrice, b.currency);
+  const level = b.priceLevel || priceLevel(minPrice, b.currency);
   const featured = detail.featured;
   const tagline = b.tagline?.trim() || null;
   const intro = b.shortDescription?.trim() || null;
@@ -345,7 +348,7 @@ export default async function BranchDetailPage({
                   <span className="text-ink-500">
                     From{' '}
                     <span className="font-semibold text-ink-800">
-                      {formatMoney(minPrice, b.currency)}
+                      {formatDisplayMoney(minPrice, b.currency, display)}
                     </span>
                   </span>
                 )}
@@ -476,11 +479,14 @@ export default async function BranchDetailPage({
             <section id="treatments" aria-labelledby="treatments-heading" className="scroll-mt-24">
               <HighlightHeading id="treatments-heading">Treatments &amp; prices</HighlightHeading>
               <p className="mt-2 text-[13.5px] text-ink-500">
-                Prices in {b.currency}. Availability is live per therapist.
+                Prices shown in {display}.
+                {display !== b.currency ? ` Converted from ${b.currency}.` : ''} Availability is live
+                per therapist.
               </p>
 
               <TreatmentSelectList
                 currency={b.currency}
+                display={display}
                 bookHref={`/spas/${slug}/${branch}/book`}
                 highlightedId={highlightTreatment ?? null}
                 treatments={treatments.map((t) => ({
@@ -600,7 +606,7 @@ export default async function BranchDetailPage({
                 </p>
                 <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   {related.map((s, i) => (
-                    <SpaCard key={s.id} spa={s} index={i} />
+                    <SpaCard key={s.id} spa={s} index={i} display={display} />
                   ))}
                 </div>
               </section>
@@ -614,7 +620,7 @@ export default async function BranchDetailPage({
               <div className="rounded-3xl border border-ink-100 bg-white p-5">
                 <p className="text-[13px] text-ink-500">Starting from</p>
                 <p className="mt-1 text-3xl font-bold text-ink-900">
-                  {formatMoney(minPrice, b.currency)}
+                  {formatDisplayMoney(minPrice, b.currency, display)}
                 </p>
                 <Link href={bookHref} className={`${GREEN_BTN} mt-4 h-11 w-full text-sm`}>
                   Check availability

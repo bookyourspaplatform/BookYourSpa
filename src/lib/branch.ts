@@ -43,6 +43,8 @@ export const branchSchema = z.object({
   shortDescription: z.string().max(160).optional().nullable(),
   categories: z.array(z.enum(SPA_CATEGORIES)).max(6).default([]),
   spaTypes: z.array(z.enum(SPA_TYPES)).max(20).default([]),
+  /** Manual spend badge on the card; omitted/null keeps the automatic one. */
+  priceLevel: z.enum(['$', '$$', '$$$', '$$$$']).nullable().optional(),
   doorstepService: z.boolean().default(false),
   showTherapistOnline: z.boolean().default(false),
   /** Agent/reseller/affiliate fee in basis points (1500 = 15%); null = partner default. */
@@ -118,6 +120,7 @@ export function branchPayload(data: Omit<BranchSaveInput, 'id'>) {
     googleRatingCount: cleanGoogleCount(data.googleRatingCount),
     tagline: data.tagline || null,
     shortDescription: data.shortDescription || null,
+    priceLevel: data.priceLevel || null,
     images: data.images.filter((s) => /^https?:\/\//i.test(s) || /^data:image\//i.test(s)).slice(0, 10),
   };
 }

@@ -68,6 +68,37 @@ export async function setProviderStatus(id: string, status: 'approved' | 'suspen
   }
 }
 
+/**
+ * Admin feature toggle on a listing: turns the "Featured" badge on the public
+ * spa card and the home page's featured rail on or off. Clears any scheduled
+ * `featuredUntil` so the switch is a plain on/off, never a leftover expiry.
+ */
+export async function setProviderFeatured(id: string, featured: boolean): Promise<ActionResult> {
+  try {
+    const { user, db } = await adminCtx();
+    const row = await db.query.providers.findFirst({ where: eq(providers.id, id) });
+    if (!row) return fail('Provider not found.');
+    await db
+      .update(providers)
+      .set({ featured, featuredUntil: null, updatedAt: new Date() })
+      .where(eq(providers.id, id));
+    await logAudit({
+      actorId: user.id,
+      actorRole: user.role,
+      action: 'admin.provider_featured',
+      entity: 'provider',
+      entityId: id,
+      meta: { featured },
+    });
+    revalidateAdmin();
+    revalidatePath('/spas');
+    revalidatePath('/');
+    return { ok: true };
+  } catch {
+    return fail('Could not update the feature flag.');
+  }
+}
+
 /* ------------------ spa business creation + claims ------------------ */
 
 /**
@@ -220,7 +251,9 @@ export async function adminSaveSpa(input: z.infer<typeof adminSpaSchema>): Promi
     revalidatePath(`/spas/${providerSlug}`);
     revalidatePath(`/spas/${providerSlug}/${slug}`);
     return { ok: true, data: { id: created!.id, providerId } };
-  } catch {
+  } catch (err) {
+    const e = err as Error & { cause?: unknown };
+    console.error('[adminSaveSpa] failed:', e.message, '| cause:', e.cause instanceof Error ? `${e.cause.name}: ${e.cause.message}` : e.cause);
     return fail('Could not save the spa business.');
   }
 }
@@ -247,6 +280,7 @@ export type AdminSpaBranch = {
   shortDescription: string | null;
   categories: string[];
   spaTypes: string[];
+  priceLevel: string | null;
   doorstepService: boolean;
   showTherapistOnline: boolean;
   agentFeeBps: number | null;
@@ -318,6 +352,7 @@ export async function adminGetSpa(
       shortDescription: b.shortDescription,
       categories: b.categories ?? [],
       spaTypes: b.spaTypes ?? [],
+      priceLevel: b.priceLevel,
       doorstepService: b.doorstepService,
       showTherapistOnline: b.showTherapistOnline,
       agentFeeBps: b.agentFeeBps,

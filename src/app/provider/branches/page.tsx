@@ -57,6 +57,7 @@ export default async function ProviderBranchesPage() {
     shortDescription: b.shortDescription,
     categories: b.categories ?? [],
     spaTypes: b.spaTypes ?? [],
+    priceLevel: b.priceLevel,
     doorstepService: b.doorstepService,
     showTherapistOnline: b.showTherapistOnline,
     agentFeeBps: b.agentFeeBps,

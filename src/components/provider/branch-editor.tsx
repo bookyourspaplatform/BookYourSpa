@@ -72,6 +72,8 @@ export type BranchRow = {
   shortDescription: string | null;
   categories: string[];
   spaTypes: string[];
+  /** Manual spend badge on the card ($ … $$$$), null = automatic. */
+  priceLevel: string | null;
   doorstepService: boolean;
   showTherapistOnline: boolean;
   agentFeeBps: number | null;
@@ -111,6 +113,8 @@ type Draft = {
   shortDescription: string;
   categories: string[];
   spaTypes: string[];
+  /** '' = automatic, otherwise the level chosen in the select. */
+  priceLevel: string;
   doorstepService: boolean;
   showTherapistOnline: boolean;
   /** Agent/reseller/affiliate fee as a percent string ('' = partner default). */
@@ -148,6 +152,7 @@ export const EMPTY_BRANCH_ROW: Draft = {
   shortDescription: '',
   categories: [],
   spaTypes: [],
+  priceLevel: '',
   doorstepService: false,
   showTherapistOnline: true,
   agentFeePercent: '',
@@ -181,6 +186,14 @@ const TIMEZONES = [
   'UTC',
 ];
 const CURRENCIES = ['IDR', 'AED', 'USD', 'SGD', 'THB', 'EUR', 'GBP', 'AUD'];
+/** Price badge options — "Automatic" follows the cheapest treatment price. */
+const PRICE_LEVELS: [value: string, label: string][] = [
+  ['', 'Automatic — from my treatment prices'],
+  ['$', '$ — Budget'],
+  ['$$', '$$ — Mid-range'],
+  ['$$$', '$$$ — Premium'],
+  ['$$$$', '$$$$ — Luxury'],
+];
 const COUNTRIES = ['ID', 'AE', 'SG', 'TH', 'MY', 'IN', 'GB', 'US', 'AU'];
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -202,6 +215,7 @@ function toDraft(branch: BranchRow | null): Draft {
     description: branch.description ?? '',
     categories: branch.categories ?? [],
     spaTypes: branch.spaTypes ?? [],
+    priceLevel: branch.priceLevel ?? '',
     agentFeePercent: branch.agentFeeBps != null ? String(branch.agentFeeBps / 100) : '',
     facilities: branch.facilities ?? [],
     images: branch.images ?? [],
@@ -484,6 +498,7 @@ export function BranchEditor({
         shortDescription: draft.shortDescription?.trim() || null,
         categories: draft.categories as (typeof SPA_CATEGORIES)[number][],
         spaTypes: draft.spaTypes as (typeof SPA_TYPES)[number][],
+        priceLevel: (draft.priceLevel || null) as '$' | '$$' | '$$$' | '$$$$' | null,
         doorstepService: draft.doorstepService,
         showTherapistOnline: draft.showTherapistOnline,
         agentFeeBps:
@@ -732,6 +747,26 @@ export function BranchEditor({
       <Section title="Spa / business name">
         <Field label="Name" required>
           {({ id }) => <Input id={id} value={draft.name} onChange={(e) => set('name', e.target.value)} placeholder="Dubai Marina" required />}
+        </Field>
+        <Field
+          label="Price level"
+          hint="Shown as $ / $$ / $$$ on your spa card in search results."
+          className="mt-4"
+        >
+          {({ id }) => (
+            <select
+              id={id}
+              value={draft.priceLevel}
+              onChange={(e) => set('priceLevel', e.target.value)}
+              className={inputCls()}
+            >
+              {PRICE_LEVELS.map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          )}
         </Field>
       </Section>
 
