@@ -1,10 +1,18 @@
 'use server';
 
-import { eq } from 'drizzle-orm';
+import { createHash, randomBytes } from 'node:crypto';
+import { and, eq, isNull } from 'drizzle-orm';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
 import { getDb } from '@/db';
-import { agents, providers, users, type Role } from '@/db/schema';
+import {
+  agents,
+  passwordResetTokens,
+  providers,
+  RESET_TOKEN_TTL_MS,
+  users,
+  type Role,
+} from '@/db/schema';
 import { hashPassword, passwordIssues, verifyPassword } from '@/lib/auth/password';
 import {
   HOME_PAGES,
@@ -15,11 +23,17 @@ import {
   rateLimit,
 } from '@/lib/auth/session';
 import { logAudit } from '@/lib/audit';
+import { sendPasswordResetEmail } from '@/lib/email';
+import { appUrl } from '@/lib/seo';
 import { newId, slugify, titleCase } from '@/lib/utils';
 
 export type AuthFormState = {
   error?: string;
   fieldErrors?: Record<string, string[]>;
+  /** Generic confirmation (e.g. "check your inbox") — never leaks existence. */
+  success?: string;
+  /** Where to send the user once the action finished cleanly. */
+  redirectTo?: string;
 } | null;
 
 function fieldErrors(error: z.ZodError): Record<string, string[]> {
@@ -277,6 +291,142 @@ export async function registerAgentAction(
     entityId: agentId,
   });
   redirect('/agent');
+}
+
+/* ----------------------------- reset password -------------------------- */
+
+/** We only ever store the digest — a leaked row can't be replayed as a link. */
+function hashResetToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+const forgotSchema = z.object({
+  email: z.email('Enter a valid email address.'),
+});
+
+/**
+ * Always reports success so the form can't be used to probe which emails have
+ * accounts. The link only lands when RESEND_API_KEY is configured; otherwise
+ * the request is still recorded in the outbox for an operator to action.
+ */
+export async function forgotPasswordAction(
+  _prev: AuthFormState,
+  formData: FormData,
+): Promise<AuthFormState> {
+  const parsed = forgotSchema.safeParse({ email: formData.get('email') });
+  if (!parsed.success) return { fieldErrors: fieldErrors(parsed.error) };
+
+  const email = parsed.data.email.toLowerCase();
+  const ip = await clientIp();
+  const wait = rateLimit(`forgot:${ip ?? 'anon'}:${email}`, 3, 15 * 60_000);
+  if (wait > 0) {
+    return { error: `Too many reset requests. Try again in ${Math.ceil(wait / 60)} minutes.` };
+  }
+
+  const db = await getDb();
+  const user = await db.query.users.findFirst({ where: eq(users.email, email) });
+
+  // Never reveal whether the address exists — issue nothing, say the same thing.
+  if (user && user.status === 'active') {
+    // One live link at a time: retire anything still outstanding.
+    await db
+      .update(passwordResetTokens)
+      .set({ usedAt: new Date() })
+      .where(and(eq(passwordResetTokens.userId, user.id), isNull(passwordResetTokens.usedAt)));
+
+    const token = randomBytes(32).toString('base64url');
+    await db.insert(passwordResetTokens).values({
+      id: newId('prt'),
+      userId: user.id,
+      tokenHash: hashResetToken(token),
+      expiresAt: new Date(Date.now() + RESET_TOKEN_TTL_MS),
+    });
+
+    const resetUrl = await appUrl(`/reset-password?token=${encodeURIComponent(token)}`);
+    const result = await sendPasswordResetEmail(user.email, user.name, resetUrl);
+    await logAudit({
+      actorId: user.id,
+      actorRole: user.role,
+      action: 'auth.password_reset_requested',
+      entity: 'user',
+      entityId: user.id,
+      ip,
+      meta: { delivery: result.status },
+    });
+  }
+
+  return { success: `If an account exists for ${email}, a reset link is on its way. Check your inbox and spam folder.` };
+}
+
+const resetSchema = z.object({
+  token: z.string().min(10, 'This reset link is not valid.'),
+  password: passwordSchema,
+  confirm: z.string().min(1, 'Confirm your new password.'),
+});
+
+export async function resetPasswordAction(
+  _prev: AuthFormState,
+  formData: FormData,
+): Promise<AuthFormState> {
+  const parsed = resetSchema.safeParse({
+    token: formData.get('token'),
+    password: formData.get('password'),
+    confirm: formData.get('confirm'),
+  });
+  if (!parsed.success) return { fieldErrors: fieldErrors(parsed.error) };
+
+  if (parsed.data.password !== parsed.data.confirm) {
+    return { fieldErrors: { confirm: ['Passwords do not match.'] } };
+  }
+
+  const ip = await clientIp();
+  const wait = rateLimit(`reset:${ip ?? 'anon'}`, 10, 15 * 60_000);
+  if (wait > 0) return { error: `Too many attempts. Try again in ${Math.ceil(wait / 60)} minutes.` };
+
+  const db = await getDb();
+  const tokenHash = hashResetToken(parsed.data.token);
+  const row = await db.query.passwordResetTokens.findFirst({
+    where: eq(passwordResetTokens.tokenHash, tokenHash),
+    with: { user: true },
+  });
+
+  const usable =
+    row &&
+    !row.usedAt &&
+    row.expiresAt > new Date() &&
+    row.user &&
+    row.user.status === 'active';
+
+  if (!usable) {
+    return { error: 'This reset link has expired or already been used. Request a new one.' };
+  }
+
+  // Consume the link first so it can never be replayed, even if the write below fails.
+  const consumed = await db
+    .update(passwordResetTokens)
+    .set({ usedAt: new Date() })
+    .where(and(eq(passwordResetTokens.id, row!.id), isNull(passwordResetTokens.usedAt)))
+    .returning({ id: passwordResetTokens.id });
+  if (!consumed.length) return { error: 'This reset link has already been used. Request a new one.' };
+
+  await db
+    .update(users)
+    .set({ passwordHash: await hashPassword(parsed.data.password) })
+    .where(eq(users.id, row!.userId));
+
+  await logAudit({
+    actorId: row!.userId,
+    actorRole: row!.user.role,
+    action: 'auth.password_reset',
+    entity: 'user',
+    entityId: row!.userId,
+    ip,
+  });
+
+  return {
+    success: 'Your password has been updated. Sign in with your new password.',
+    redirectTo: LOGIN_PAGES[row!.user.role],
+  };
 }
 
 /* ------------------------------- logout ------------------------------- */

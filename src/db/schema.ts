@@ -1072,6 +1072,32 @@ export const auditLogsRelations = relations(auditLogs, ({ one }) => ({
   actor: one(users, { fields: [auditLogs.actorId], references: [users.id] }),
 }));
 
+/**
+ * Single-use password reset links. The raw token only ever exists in the
+ * emailed URL — we store its SHA-256 so a leaked database row cannot be
+ * replayed, and every row dies after RESET_TOKEN_TTL_MS.
+ */
+export const RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+export const passwordResetTokens = pgTable(
+  'password_reset_tokens',
+  {
+    id: text('id').primaryKey(), // prt_xxxxxxxx
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull().unique(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    usedAt: timestamp('used_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index('password_reset_user_idx').on(t.userId), index('password_reset_expiry_idx').on(t.expiresAt)],
+);
+
+export const passwordResetTokensRelations = relations(passwordResetTokens, ({ one }) => ({
+  user: one(users, { fields: [passwordResetTokens.userId], references: [users.id] }),
+}));
+
 export const emailOutbox = pgTable(
   'email_outbox',
   {
@@ -1121,3 +1147,4 @@ export type Review = typeof reviews.$inferSelect;
 export type Page = typeof pages.$inferSelect;
 export type AuditLog = typeof auditLogs.$inferSelect;
 export type EmailOutbox = typeof emailOutbox.$inferSelect;
+export type PasswordResetToken = typeof passwordResetTokens.$inferSelect;

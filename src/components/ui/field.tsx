@@ -9,6 +9,8 @@ export { inputCls } from '@/components/ui/classes';
 
 type FieldProps = {
   label?: string;
+  /** Rendered opposite the label — used for things like "Forgot password?". */
+  labelExtra?: React.ReactNode;
   error?: string | string[] | null;
   hint?: React.ReactNode;
   required?: boolean;
@@ -16,17 +18,22 @@ type FieldProps = {
   children: (props: { id: string; invalid: boolean }) => React.ReactNode;
 };
 
-export function Field({ label, error, hint, required, className, children }: FieldProps) {
+export function Field({ label, labelExtra, error, hint, required, className, children }: FieldProps) {
   const id = useId();
   const message = Array.isArray(error) ? error[0] : error;
   const invalid = Boolean(message);
   return (
     <div className={cn('flex flex-col gap-1.5', className)}>
-      {label && (
-        <label htmlFor={id} className="text-[13px] font-medium text-ink-700">
-          {label}
-          {required && <span className="text-clay-600"> *</span>}
-        </label>
+      {(label || labelExtra) && (
+        <div className="flex items-baseline justify-between gap-3">
+          {label && (
+            <label htmlFor={id} className="text-[13px] font-medium text-ink-700">
+              {label}
+              {required && <span className="text-clay-600"> *</span>}
+            </label>
+          )}
+          {labelExtra}
+        </div>
       )}
       {children({ id, invalid })}
       {message && (

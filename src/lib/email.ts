@@ -63,9 +63,18 @@ export function voucherEmailHtml(booking: Booking, branch: Branch, treatment: Tr
 
 export type SendResult = { status: 'sent' | 'skipped' | 'failed'; error?: string };
 
-export async function sendBookingVoucherEmail(booking: Booking, branch: Branch, treatment: Treatment): Promise<SendResult> {
-  const html = voucherEmailHtml(booking, branch, treatment);
-  const subject = `Voucher ${booking.code} — ${treatment.name} at ${branch.name}`;
+/**
+ * Deliver one message and always record it in `email_outbox`.
+ * Kept identical in shape for every template so a missing RESEND key degrades
+ * the same way (recorded as `skipped`, never silently dropped).
+ */
+async function deliver(opts: {
+  to: string;
+  subject: string;
+  template: string;
+  html: string;
+  bookingId?: string;
+}): Promise<SendResult> {
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.EMAIL_FROM ?? 'BookYourSpa <bookings@resend.dev>';
 
@@ -76,12 +85,7 @@ export async function sendBookingVoucherEmail(booking: Booking, branch: Branch, 
     try {
       const { Resend } = await import('resend');
       const resend = new Resend(apiKey);
-      const { error: sendError } = await resend.emails.send({
-        from,
-        to: booking.guestEmail,
-        subject,
-        html,
-      });
+      const { error: sendError } = await resend.emails.send({ from, to: opts.to, subject: opts.subject, html: opts.html });
       if (sendError) {
         status = 'failed';
         error = String(sendError);
@@ -100,23 +104,62 @@ export async function sendBookingVoucherEmail(booking: Booking, branch: Branch, 
     const db = await getDb();
     await db.insert(emailOutbox).values({
       id: newId('eml'),
-      toEmail: booking.guestEmail,
-      subject,
-      template: 'booking_voucher',
-      body: html,
+      toEmail: opts.to,
+      subject: opts.subject,
+      template: opts.template,
+      body: opts.html,
       status,
       error,
-      bookingId: booking.id,
+      bookingId: opts.bookingId ?? null,
       sentAt: status === 'sent' ? new Date() : null,
     });
   } catch (err) {
     console.error('[email] failed to record outbox row', err);
   }
 
-  if (status !== 'sent') {
-    console.log(`[email] voucher ${booking.code} for ${booking.guestEmail} → ${status} (${error})`);
-  }
+  if (status !== 'sent') console.log(`[email] ${opts.template} to ${opts.to} → ${status} (${error})`);
   return { status, error };
+}
+
+/** Password reset link — points at /reset-password?token=… on the live origin. */
+export function passwordResetEmailHtml(name: string, resetUrl: string): string {
+  return `
+  <div style="font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:#f6f2ec;padding:32px 16px;color:#17201d">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;margin:0 auto;background:#fff;border-radius:16px;border:1px solid #eef1f0">
+      <tr><td style="padding:28px 28px 8px">
+        <p style="font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#26665e;margin:0 0 6px">Password reset</p>
+        <h1 style="font-size:22px;margin:0 0 4px">Reset your password</h1>
+        <p style="margin:0;color:#66746f;font-size:14px">Hi ${name}, we received a request to reset your BookYourSpa password.</p>
+      </td></tr>
+      <tr><td style="padding:16px 28px">
+        <a href="${resetUrl}" style="display:block;text-align:center;background:#20524c;color:#fff;text-decoration:none;padding:14px 22px;border-radius:999px;font-weight:600;font-size:15px">Choose a new password</a>
+        <p style="margin:16px 0 0;font-size:13px;color:#66746f">This link works once and expires in 1 hour. If you did not ask for it you can ignore this email — your password stays unchanged.</p>
+      </td></tr>
+      <tr><td style="padding:4px 28px 28px">
+        <p style="margin:0;font-size:12px;color:#8b9793">Button not working? Paste this into your browser:<br/><a href="${resetUrl}" style="color:#26665e;word-break:break-all">${resetUrl}</a></p>
+        <p style="margin:14px 0 0;font-size:12px;color:#8b9793">BookYourSpa · bookyourspa.net</p>
+      </td></tr>
+    </table>
+  </div>`;
+}
+
+export async function sendPasswordResetEmail(to: string, name: string, resetUrl: string): Promise<SendResult> {
+  return deliver({
+    to,
+    subject: 'Reset your BookYourSpa password',
+    template: 'password_reset',
+    html: passwordResetEmailHtml(name, resetUrl),
+  });
+}
+
+export async function sendBookingVoucherEmail(booking: Booking, branch: Branch, treatment: Treatment): Promise<SendResult> {
+  return deliver({
+    to: booking.guestEmail,
+    subject: `Voucher ${booking.code} — ${treatment.name} at ${branch.name}`,
+    template: 'booking_voucher',
+    html: voucherEmailHtml(booking, branch, treatment),
+    bookingId: booking.id,
+  });
 }
 
 export async function getOutboxForBooking(bookingId: string) {
