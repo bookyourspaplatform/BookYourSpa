@@ -2,11 +2,19 @@ import Stripe from 'stripe';
 import type { CheckoutInput, CheckoutResult, Gateway, WebhookOutcome } from './types';
 
 let cached: Stripe | null = null;
+let cachedKey: string | null = null;
 
+/**
+ * Built lazily from the *current* secret key — the admin can rotate it from
+ * System settings at any time, so a key change drops the cached client.
+ */
 function client(): Stripe | null {
   const key = process.env.STRIPE_SECRET_KEY;
   if (!key) return null;
-  if (!cached) cached = new Stripe(key, { typescript: true });
+  if (!cached || cachedKey !== key) {
+    cached = new Stripe(key, { typescript: true });
+    cachedKey = key;
+  }
   return cached;
 }
 

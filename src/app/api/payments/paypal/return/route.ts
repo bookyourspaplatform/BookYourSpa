@@ -6,6 +6,7 @@ import { captureOrder } from '@/lib/payments/paypal';
 import { confirmPayment } from '@/lib/payments';
 import { appUrl } from '@/lib/seo';
 import { rateLimit, clientIpOf } from '@/lib/security';
+import { getSettings } from '@/lib/settings';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,6 +24,8 @@ export async function GET(req: Request) {
   if (!limited.ok) return NextResponse.redirect(`${await appUrl('/spas')}`, 429);
 
   const base = await appUrl('');
+  // Loads admin-entered PayPal credentials from settings into the environment.
+  await getSettings();
   if (!orderId || !code) {
     return NextResponse.redirect(`${base}/spas`, 303);
   }

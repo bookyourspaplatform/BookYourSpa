@@ -1,11 +1,12 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { headers } from 'next/headers';
 import { asc } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { settings as settingsTable } from '@/db/schema';
 import { DEFAULT_SETTINGS } from '@/lib/settings';
 import { pageMetadata } from '@/lib/seo';
-import { SettingsForm } from '@/components/admin/settings-form';
+import { PaymentsSettings, SettingsForm, type PaymentsConfig } from '@/components/admin/settings-form';
 
 export const dynamic = 'force-dynamic';
 
@@ -71,6 +72,37 @@ export default async function AdminSettingsPage() {
   const merged: Record<string, unknown> = { ...DEFAULT_SETTINGS };
   for (const r of rows) if (r.key in DEFAULT_SETTINGS) merged[r.key] = r.value;
 
+  /* Gateway configuration state — credentials stay on the server; only
+     presence/mode flags are handed to the client component below. */
+  const h = await headers();
+  const host = h.get('x-forwarded-host') ?? h.get('host') ?? 'localhost:3000';
+  const proto = h.get('x-forwarded-proto') ?? (host.startsWith('localhost') || host.startsWith('127.') ? 'http' : 'https');
+  const str = (k: string) => String(merged[k] ?? '').trim();
+
+  const dbStripeKey = str('payments.stripe.secretKey');
+  const envStripeKey = (process.env.STRIPE_SECRET_KEY ?? '').trim();
+  const stripeKey = dbStripeKey || envStripeKey;
+  const dbPpId = str('payments.paypal.clientId');
+  const dbPpSecret = str('payments.paypal.clientSecret');
+  const modeSetting = str('payments.paypal.mode');
+
+  const paymentsConfig: PaymentsConfig = {
+    origin: `${proto}://${host}`,
+    stripe: {
+      enabled: merged['features.stripe'] !== false,
+      keyMode: stripeKey ? (stripeKey.startsWith('sk_live_') ? 'live' : 'test') : 'none',
+      keyFrom: stripeKey ? (dbStripeKey ? 'settings' : 'env') : null,
+      webhookConfigured: Boolean(str('payments.stripe.webhookSecret') || process.env.STRIPE_WEBHOOK_SECRET),
+    },
+    paypal: {
+      enabled: merged['features.paypal'] !== false,
+      idConfigured: Boolean(dbPpId || process.env.PAYPAL_CLIENT_ID),
+      secretConfigured: Boolean(dbPpSecret || process.env.PAYPAL_CLIENT_SECRET),
+      mode: modeSetting === 'live' ? 'live' : modeSetting === 'sandbox' ? 'sandbox' : process.env.PAYPAL_MODE === 'live' ? 'live' : 'sandbox',
+      modeFrom: modeSetting === 'live' || modeSetting === 'sandbox' ? 'settings' : 'env',
+    },
+  };
+
   return (
     <div className="space-y-7">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -86,6 +118,17 @@ export default async function AdminSettingsPage() {
       </div>
 
       {GROUPS.map((group) => {
+        if (group.title === 'Payments') {
+          return (
+            <section key={group.title} className="space-y-3">
+              <div>
+                <h2 className="text-[16px] font-semibold">{group.title}</h2>
+                <p className="text-[13px] text-ink-500">{group.hint} Tick a gateway to open its configuration.</p>
+              </div>
+              <PaymentsSettings config={paymentsConfig} />
+            </section>
+          );
+        }
         const entries = group.keys
           .filter((k) => k in DEFAULT_SETTINGS)
           .map((k) => ({ key: k, value: merged[k] }));

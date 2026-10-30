@@ -1,11 +1,14 @@
 import { NextResponse } from 'next/server';
 import { paypalGateway } from '@/lib/payments/paypal';
 import { confirmPayment } from '@/lib/payments';
+import { getSettings } from '@/lib/settings';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: Request) {
   try {
+    // Loads admin-entered credentials from settings into the environment.
+    await getSettings();
     const event = await paypalGateway.verifyWebhook?.(req);
     if (!event?.ok) {
       return NextResponse.json(

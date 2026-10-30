@@ -32,7 +32,7 @@ import { cancelBooking, BookingError } from '@/lib/booking';
 import { logAudit } from '@/lib/audit';
 import { newId, slugify, stripHtml } from '@/lib/utils';
 import { sanitizeRichText } from '@/lib/security';
-import { DEFAULT_SETTINGS, type SettingKey } from '@/lib/settings';
+import { DEFAULT_SETTINGS, invalidateSettingsCache, type SettingKey } from '@/lib/settings';
 
 export type ActionResult<T = unknown> = { ok: true; data?: T } | { ok: false; error: string };
 
@@ -713,6 +713,7 @@ export async function saveSettings(values: Record<string, unknown>): Promise<Act
       if (existing) await db.update(settings).set({ value: typed, updatedAt: new Date() }).where(eq(settings.key, key));
       else await db.insert(settings).values({ key, value: typed });
     }
+    invalidateSettingsCache(); // gateway credentials apply on the next request
     await logAudit({ actorId: user.id, actorRole: user.role, action: 'admin.settings_updated', entity: 'settings', meta: { keys: Object.keys(parsed.data) } });
     revalidatePath('/admin/settings');
     revalidatePath('/');

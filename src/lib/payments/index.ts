@@ -214,6 +214,8 @@ export async function refundBookingPayment(
   });
   if (!payment) return { ok: false, error: 'No captured payment found for this booking.' };
 
+  // Refunds need the gateway secret — load admin-entered credentials first.
+  await getSettings();
   const gateway = getGateway(payment.gateway);
   if (!gateway?.refund) return { ok: false, error: `${payment.gateway} refunds are not configured.` };
 

@@ -103,7 +103,7 @@ type QuoteDto = {
 const STEPS = ['Treatment', 'Date & time', 'Your details', 'Review'] as const;
 
 const GATEWAY_LABELS: Record<string, string> = {
-  stripe: 'Pay by card (Stripe)',
+  stripe: 'Pay by Card',
   paypal: 'Pay with PayPal',
   razorpay: 'Pay with Razorpay',
   venue: 'Pay at the venue',

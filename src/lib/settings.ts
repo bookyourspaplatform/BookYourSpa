@@ -42,6 +42,13 @@ export const DEFAULT_SETTINGS = {
   /** Platform-wide switches for the hosted gateways (branch lists still apply). */
   'features.stripe': true,
   'features.paypal': true,
+  /* Gateway credentials — admin-editable; empty falls back to env vars. */
+  'payments.stripe.secretKey': '',
+  'payments.stripe.webhookSecret': '',
+  'payments.paypal.clientId': '',
+  'payments.paypal.clientSecret': '',
+  /** 'sandbox' (test money) or 'live' (real money). */
+  'payments.paypal.mode': 'sandbox' as string,
   'features.guestCheckout': true,
   'features.agentPortal': true,
   'features.providerSignup': true,
@@ -63,8 +70,34 @@ export async function getSettings(): Promise<Settings> {
   } catch (err) {
     console.error('[settings] falling back to defaults:', err);
   }
+  applyPaymentEnv(merged);
   cache = { value: merged as Settings, at: Date.now() };
   return cache.value;
+}
+
+/**
+ * Publish admin-entered gateway credentials to the environment the payment
+ * gateways read. A non-empty DB value wins (the admin just typed it); an
+ * empty row restores whatever the real environment provides (usually nothing)
+ * — so removing a saved key really does disable it again. Server-side only —
+ * these values must never reach the client.
+ */
+const originalEnv = new Map<string, string | undefined>();
+
+export function applyPaymentEnv(s: Record<string, unknown>): void {
+  const put = (key: string, env: string) => {
+    if (!originalEnv.has(env)) originalEnv.set(env, process.env[env]); // capture before first write
+    const v = s[key];
+    const value = typeof v === 'string' && v.trim() ? v.trim() : originalEnv.get(env);
+    if (value === undefined) delete process.env[env];
+    else process.env[env] = value;
+  };
+  put('payments.stripe.secretKey', 'STRIPE_SECRET_KEY');
+  put('payments.stripe.webhookSecret', 'STRIPE_WEBHOOK_SECRET');
+  put('payments.paypal.clientId', 'PAYPAL_CLIENT_ID');
+  put('payments.paypal.clientSecret', 'PAYPAL_CLIENT_SECRET');
+  const mode = s['payments.paypal.mode'];
+  if (mode === 'live' || mode === 'sandbox') process.env.PAYPAL_MODE = mode;
 }
 
 export async function getSetting<K extends SettingKey>(key: K): Promise<Settings[K]> {
