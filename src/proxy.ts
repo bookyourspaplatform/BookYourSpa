@@ -1,6 +1,11 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { SESSION_COOKIE, verifySession, type SessionPayload } from '@/lib/auth/jwt';
+import { CURRENCY_COOKIE } from '@/lib/currency-cookie';
+import { isDisplayCurrency } from '@/lib/display-currency';
+import { LANG_COOKIE } from '@/lib/lang-cookie';
+import { isLangCode } from '@/lib/i18n';
+import { detectCurrency, detectLang } from '@/lib/locale-detect';
 
 /**
  * Edge-safe route protection (Next 16 "proxy" — the former middleware).
@@ -82,6 +87,25 @@ export async function proxy(request: NextRequest) {
   }
 
   const response = NextResponse.next();
+
+  // First visit → adopt the visitor's locale (never overwrites a saved choice).
+  const country = request.headers.get('x-vercel-ip-country');
+  const acceptLang = request.headers.get('accept-language');
+  const cookieOpts = {
+    path: '/',
+    maxAge: 60 * 60 * 24 * 365,
+    sameSite: 'lax' as const,
+    secure: process.env.NODE_ENV === 'production',
+  };
+  if (!request.cookies.get(CURRENCY_COOKIE)) {
+    const detected = detectCurrency(country, acceptLang);
+    if (isDisplayCurrency(detected)) response.cookies.set(CURRENCY_COOKIE, detected, cookieOpts);
+  }
+  if (!request.cookies.get(LANG_COOKIE)) {
+    const detected = detectLang(acceptLang, country);
+    if (isLangCode(detected)) response.cookies.set(LANG_COOKIE, detected, cookieOpts);
+  }
+
   // Conservative security headers (CSP kept permissive for Next dev inline styles).
   response.headers.set('X-Frame-Options', 'SAMEORIGIN');
   response.headers.set('X-Content-Type-Options', 'nosniff');

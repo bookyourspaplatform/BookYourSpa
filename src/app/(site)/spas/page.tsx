@@ -6,6 +6,7 @@ import { getDb } from '@/db';
 import { promotions } from '@/db/schema';
 import { CATEGORY_LABELS, SPA_CATEGORY_LABELS, SPA_TYPE_LABELS, listSpas } from '@/lib/catalog';
 import { pageMetadata, breadcrumbJsonLd, searchResultsJsonLd, appUrl } from '@/lib/seo';
+import { getDisplayCurrency } from '@/lib/currency-cookie';
 import { JsonLd } from '@/components/json-ld';
 import { SpaCard } from '@/components/site/spa-card';
 import { SortSelect } from '@/components/site/sort-select';
@@ -78,6 +79,7 @@ export async function generateMetadata({ searchParams }: { searchParams: Promise
 export default async function SpasPage({ searchParams }: { searchParams: Promise<Search> }) {
   const sp = await searchParams;
   const db = await getDb();
+  const display = await getDisplayCurrency();
 
   const near = parseNear(sp.near);
   const radiusKm = sp.radius ? Number(sp.radius) : undefined;
@@ -337,7 +339,7 @@ export default async function SpasPage({ searchParams }: { searchParams: Promise
           ) : (
             <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
               {results.items.map((spa, i) => (
-                <SpaCard key={spa.id} spa={spa} index={i} />
+                <SpaCard key={spa.id} spa={spa} index={i} display={display} />
               ))}
             </div>
           )}

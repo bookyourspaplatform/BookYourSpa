@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { Check, Minus, Plus, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { GREEN_BTN } from '@/components/ui/classes';
-import { formatMoney } from '@/lib/money';
+import { formatDisplayMoney, type DisplayCurrency } from '@/lib/display-currency';
 import { cn } from '@/lib/utils';
 import { SPA_TYPES } from '@/db/schema';
 import { SPA_TYPE_LABELS } from '@/lib/catalog';
@@ -51,11 +51,14 @@ function maxPersonsOf(t: SelectableTreatment, tierIdx: number): number {
 export function TreatmentSelectList({
   treatments,
   currency,
+  display,
   bookHref,
   highlightedId,
 }: {
   treatments: SelectableTreatment[];
   currency: string;
+  /** Visitor's display currency — prices are converted for browsing only. */
+  display?: DisplayCurrency;
   /*   * Booking URL for this branch, e.g. `/spas/home-care-spa/dubai-spa-at-your-home/book`. */
   bookHref: string;
   /** Card to ring out (from the legacy `?treatment=` deep link). */
@@ -300,7 +303,7 @@ export function TreatmentSelectList({
                   )}
                   {t.options.length > 1 && !active && <span>From </span>}
                   <span className="text-xl font-bold tabular-nums text-ink-900">
-                    {formatMoney(shownPrice, currency)}
+                    {formatDisplayMoney(shownPrice, currency, display)}
                   </span>
                 </p>
                 <button
@@ -337,7 +340,7 @@ export function TreatmentSelectList({
               <p className="text-[13px] text-ink-500">
                 Total from{' '}
                 <span className="font-semibold tabular-nums text-ink-800">
-                  {formatMoney(total, currency)}
+                  {formatDisplayMoney(total, currency, display)}
                 </span>
                 {totalGuests > 1 && (
                   <span className="text-ink-400"> · {totalGuests} guests</span>

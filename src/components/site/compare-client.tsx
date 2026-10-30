@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { ArrowUpDown, Clock, MapPin, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { formatMoney } from '@/lib/money';
+import { formatDisplayMoney, type DisplayCurrency } from '@/lib/display-currency';
 
 type Offer = {
   treatmentId: string;
@@ -32,10 +32,13 @@ export function CompareClient({
   offers,
   categories,
   cities,
+  display,
 }: {
   offers: Offer[];
   categories: { id: string; label: string }[];
   cities: string[];
+  /** Visitor's display currency — converts every offer onto one scale. */
+  display?: DisplayCurrency;
 }) {
   const [category, setCategory] = useState('all');
   const [city, setCity] = useState('all');
@@ -159,7 +162,7 @@ export function CompareClient({
 
               <div className="flex items-center justify-between gap-4 sm:justify-end">
                 <p className="text-[16px] font-semibold tabular-nums text-brand-800">
-                  {formatMoney(o.price, o.currency)}
+                  {formatDisplayMoney(o.price, o.currency, display)}
                 </p>
                 <Link
                   href={`/spas/${o.provider.slug}/${o.branch.slug}/book?treatment=${o.treatmentId}`}

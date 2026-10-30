@@ -4,6 +4,7 @@ import { getDb } from '@/db';
 import { branchTreatments } from '@/db/schema';
 import { CATEGORY_LABELS } from '@/lib/catalog';
 import { pageMetadata, breadcrumbJsonLd, appUrl } from '@/lib/seo';
+import { getDisplayCurrency } from '@/lib/currency-cookie';
 import { JsonLd } from '@/components/json-ld';
 import { CompareClient } from '@/components/site/compare-client';
 
@@ -87,6 +88,7 @@ export default async function ComparePage() {
         offers={offers}
         categories={categories.map((c) => ({ id: c, label: CATEGORY_LABELS[c] ?? c }))}
         cities={cities}
+        display={await getDisplayCurrency()}
       />
     </>
   );
