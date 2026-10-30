@@ -689,9 +689,9 @@ export default async function BranchDetailPage({
                   <Sparkles className="size-4 text-amber-500" /> Members book smarter
                 </p>
                 <p className="mt-1.5 text-[13px] leading-relaxed text-ink-600">
-                  Sign in and the 5% platform service fee is{' '}
-                  <span className="font-semibold text-ink-800">waived</span> on your booking —
-                  that&apos;s real savings at this spa and every other on Book Your Spa.
+                  Sign in as a member and apply your promo code at checkout —{' '}
+                  <span className="font-semibold text-ink-800">instant savings</span> at this spa,
+                  and at every other spa on Book Your Spa.
                 </p>
                 <div className="mt-3 flex gap-2">
                   <Link
@@ -719,11 +719,12 @@ export default async function BranchDetailPage({
               />
             )}
 
-            {/* Enquiry */}
+            {/* Enquiry — only for listings still waiting for their owner */}
+            {!b.provider.ownerId && (
             <div className="rounded-3xl border border-dashed border-ink-200 bg-white p-4 text-center">
               <p className="text-[13px] leading-relaxed text-ink-600">
                 Still interested in this spa? Send your request and our team will help you{' '}
-                {b.provider.ownerId ? 'get the most out of it.' : 'get it claimed and live.'}
+                get it claimed and live.
               </p>
               <a
                 href={`mailto:${supportEmail}`}
@@ -732,6 +733,7 @@ export default async function BranchDetailPage({
                 <Mail className="size-3.5" /> {supportEmail}
               </a>
             </div>
+            )}
           </aside>
         </div>
       </div>
