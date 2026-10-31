@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -33,7 +34,11 @@ export function Modal({
     };
   }, [open, onClose]);
 
-  if (!open) return null;
+  /* Portaled to <body>: the header's backdrop-blur would otherwise become the
+     containing block for this fixed overlay and centre the dialog on the header
+     strip (off the top of the screen) instead of on the viewport. The document
+     guard keeps the server render (where there is no body) identical. */
+  if (!open || typeof document === 'undefined') return null;
 
   const sizeCls =
     size === 'sm'
@@ -44,7 +49,7 @@ export function Modal({
           ? 'max-w-4xl'
           : 'max-w-lg';
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-[70] flex items-end justify-center sm:items-center">
       <div className="absolute inset-0 bg-ink-900/40 backdrop-blur-[2px]" onClick={onClose} aria-hidden />
       <div
@@ -72,6 +77,7 @@ export function Modal({
         </div>
         <div className="px-5 py-4">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

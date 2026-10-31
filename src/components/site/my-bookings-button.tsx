@@ -92,7 +92,7 @@ export function MyBookingsButton({
             )}
           >
             <Receipt className="size-4" />
-            I&apos;m a customer
+            Book as guest
           </button>
           <button
             type="button"
