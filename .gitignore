@@ -47,6 +47,10 @@ next-env.d.ts
 # local review artifacts
 /screenshots/
 
+# chat attachments + scratch logs (not app source; Tailwind scans these)
+/.cloud-attachments/
+/tmp-*
+
 # env files
 .env*.local
 
