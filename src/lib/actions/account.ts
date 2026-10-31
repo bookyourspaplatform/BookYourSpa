@@ -10,6 +10,36 @@ import { logAudit } from '@/lib/audit';
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
+/**
+ * Guest lookup behind the header's "My Bookings" window: voucher code + the
+ * email the booking was made with. Only a match hands back the code, which
+ * then opens the (unguessable) voucher page — the email is the second factor
+ * that keeps a mistyped code from opening someone else's booking.
+ */
+export async function findMyBooking(
+  input: { code: string; email: string },
+): Promise<{ ok: true; code: string } | { ok: false; error: string }> {
+  try {
+    const code = input.code.trim().toUpperCase();
+    const email = input.email.trim().toLowerCase();
+    if (!/^BYS-[A-Z0-9]{4,16}$/.test(code)) {
+      return { ok: false, error: 'Enter your booking code, e.g. BYS-4F7K2Q.' };
+    }
+    if (!email.includes('@') || !email.includes('.')) {
+      return { ok: false, error: 'Enter the email address you booked with.' };
+    }
+    const db = await getDb();
+    const booking = await db.query.bookings.findFirst({ where: eq(bookings.code, code) });
+    if (!booking) return { ok: false, error: 'No booking found with that code.' };
+    if (booking.guestEmail.trim().toLowerCase() !== email) {
+      return { ok: false, error: 'That code belongs to a different email address.' };
+    }
+    return { ok: true, code: booking.code };
+  } catch {
+    return { ok: false, error: 'Could not look up your booking. Please try again.' };
+  }
+}
+
 /** Customer cancels their own booking (policy enforced in cancelBooking). */
 export async function cancelMyBooking(bookingId: string): Promise<ActionResult> {
   try {

@@ -77,16 +77,12 @@ export function HeaderMenu({ user }: { user: { name: string; role: Role; email: 
               <>
                 <Link href="/login" onClick={() => setOpen(false)} className={buttonClasses('outline', 'md', 'w-full')}>
                   Sign in
-                </Link>
-                <Link href="/register" onClick={() => setOpen(false)} className={buttonClasses('primary', 'md', 'w-full')}>
-                  Create account
-                </Link>
-                <Link
-                  href="/login/provider"
+                </Link>                <Link
+                  href="/register"
                   onClick={() => setOpen(false)}
-                  className={buttonClasses('ghost', 'md', 'w-full')}
+                  className={buttonClasses('primary', 'md', 'w-full')}
                 >
-                  List your spa
+                  Create account
                 </Link>
                 <Link
                   href="/login/agent"

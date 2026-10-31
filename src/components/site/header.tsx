@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { CalendarCheck, UserRound } from 'lucide-react';
+import { UserRound } from 'lucide-react';
 import { Logo } from '@/components/logo';
 import { getCurrentUser } from '@/lib/auth/session';
 import { getSettings } from '@/lib/settings';
@@ -7,6 +7,7 @@ import { t } from '@/lib/i18n';
 import { getLang } from '@/lib/lang-cookie';
 import { getDisplayCurrency } from '@/lib/currency-cookie';
 import { HeaderMenu } from '@/components/site/header-menu';
+import { MyBookingsButton } from '@/components/site/my-bookings-button';
 import { PrefsSwitchers } from '@/components/site/prefs-switchers';
 import { buttonClasses } from '@/components/ui/button';
 
@@ -70,13 +71,12 @@ export async function SiteHeader() {
         <div className="flex items-center gap-2">
           {user ? (
             <>
-              <Link
-                href={user.role === 'customer' ? '/account/bookings' : home!}
-                className={`${buttonClasses('secondary', 'sm')} hidden sm:inline-flex`}
-              >
-                <CalendarCheck className="size-4" />
-                {t(lang, 'nav.myBookings')}
-              </Link>
+              <MyBookingsButton
+                label={t(lang, 'nav.myBookings')}
+                signedIn
+                memberHref={user.role === 'customer' ? '/account/bookings' : home!}
+                className="hidden sm:inline-flex"
+              />
               <Link href={home!} className={`${buttonClasses('outline', 'sm')} hidden lg:inline-flex`}>
                 <UserRound className="size-4" />
                 {user.name.split(' ')[0]}
@@ -85,19 +85,15 @@ export async function SiteHeader() {
             </>
           ) : (
             <>
-              <Link
-                href="/login/provider"
-                className="hidden rounded-full px-3 py-2 text-sm font-medium text-ink-600 hover:bg-sand-100 hover:text-ink-900 lg:block"
-              >
-                List your spa
-              </Link>
               <Link href="/login" className={`${buttonClasses('outline', 'sm')} hidden sm:inline-flex`}>
                 Sign in
               </Link>
-              <Link href="/account/bookings" className={`${buttonClasses('secondary', 'sm')} hidden sm:inline-flex`}>
-                <CalendarCheck className="size-4" />
-                {t(lang, 'nav.myBookings')}
-              </Link>
+              <MyBookingsButton
+                label={t(lang, 'nav.myBookings')}
+                signedIn={false}
+                memberHref="/account/bookings"
+                className="hidden sm:inline-flex"
+              />
               <HeaderMenu user={null} />
             </>
           )}
